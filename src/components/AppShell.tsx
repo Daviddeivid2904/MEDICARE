@@ -1,19 +1,25 @@
 "use client";
 
-import { Menu, ShieldCheck, X } from "lucide-react";
+import { LogOut, Menu, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import { navItems } from "@/data/mockData";
-import type { SectionId } from "@/types";
+import type { Patient, SectionId, SessionUser } from "@/types";
 
 type AppShellProps = {
   activeSection: SectionId;
   onSectionChange: (section: SectionId) => void;
+  patient: Patient;
+  user: SessionUser;
+  onLogout: () => void;
   children: React.ReactNode;
 };
 
 export function AppShell({
   activeSection,
   onSectionChange,
+  patient,
+  user,
+  onLogout,
   children,
 }: AppShellProps) {
   const [open, setOpen] = useState(false);
@@ -72,7 +78,10 @@ export function AppShell({
 
         <div className="mt-8 rounded-2xl bg-violet-50 p-4 text-sm text-violet-900 ring-1 ring-violet-100">
           <p className="font-bold">Paciente monitoreado</p>
-          <p className="mt-1 text-violet-700">Rosa Martínez, 78 años</p>
+          <p className="mt-1 text-violet-700">
+            {patient.name}, {patient.age} años
+          </p>
+          <p className="mt-2 text-xs text-violet-600">{patient.generalStatus}</p>
         </div>
       </aside>
 
@@ -95,11 +104,18 @@ export function AppShell({
           </button>
           <div className="ml-auto flex items-center gap-3">
             <span className="hidden text-sm font-medium text-slate-500 sm:inline">
-              Martes 12 de mayo, 2026
+              {user.name} · {user.role}
             </span>
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">
-              AG
+              {user.initials}
             </div>
+            <button
+              aria-label="Cerrar sesión"
+              onClick={onLogout}
+              className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+            >
+              <LogOut size={19} />
+            </button>
           </div>
         </header>
         <div className="px-5 py-6 lg:px-8 lg:py-8">{children}</div>

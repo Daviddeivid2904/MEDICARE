@@ -14,6 +14,7 @@ import type {
   EvolutionMetric,
   Medication,
   NavItem,
+  Patient,
   Visit,
 } from "@/types";
 
@@ -56,7 +57,16 @@ export const initialMedications: Medication[] = [
   { id: 4, name: "Vitamina D", dose: "1 cápsula", time: "09:00", status: "atrasado" },
 ];
 
-export const visits: Visit[] = [
+export const initialPatient: Patient = {
+  name: "Rosa Martínez",
+  age: 78,
+  diagnosis: "Hipertensión y diabetes tipo 2",
+  emergencyContact: "Ana Gómez · +54 11 5555-0142",
+  doctor: "Dra. Lucía Pérez",
+  generalStatus: "Estable",
+};
+
+export const initialVisits: Visit[] = [
   {
     id: 1,
     professional: "Dra. Lucía Pérez",

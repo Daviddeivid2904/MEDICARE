@@ -53,6 +53,21 @@ export type CareContact = {
   initials: string;
 };
 
+export type Patient = {
+  name: string;
+  age: number;
+  diagnosis: string;
+  emergencyContact: string;
+  doctor: string;
+  generalStatus: string;
+};
+
+export type SessionUser = {
+  name: string;
+  role: string;
+  initials: string;
+};
+
 export type EvolutionMetric = {
   label: string;
   value: string;
