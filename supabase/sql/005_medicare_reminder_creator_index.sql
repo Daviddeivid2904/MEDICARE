@@ -1,0 +1,2 @@
+create index medication_reminders_created_by_demo_user_idx
+on public.medication_reminders(created_by_demo_user);

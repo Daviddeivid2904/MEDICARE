@@ -51,10 +51,10 @@ export const benefits = [
 ];
 
 export const initialMedications: Medication[] = [
-  { id: 1, name: "Losartán", dose: "50 mg", time: "08:00", status: "tomado" },
-  { id: 2, name: "Metformina", dose: "850 mg", time: "12:30", status: "pendiente" },
-  { id: 3, name: "Atorvastatina", dose: "20 mg", time: "20:00", status: "pendiente" },
-  { id: 4, name: "Vitamina D", dose: "1 cápsula", time: "09:00", status: "atrasado" },
+  { id: "mock-med-1", name: "Losartán", dose: "50 mg", time: "08:00", status: "tomado" },
+  { id: "mock-med-2", name: "Metformina", dose: "850 mg", time: "12:30", status: "pendiente" },
+  { id: "mock-med-3", name: "Atorvastatina", dose: "20 mg", time: "20:00", status: "pendiente" },
+  { id: "mock-med-4", name: "Vitamina D", dose: "1 cápsula", time: "09:00", status: "atrasado" },
 ];
 
 export const initialPatient: Patient = {
@@ -64,11 +64,15 @@ export const initialPatient: Patient = {
   emergencyContact: "Ana Gómez · +54 11 5555-0142",
   doctor: "Dra. Lucía Pérez",
   generalStatus: "Estable",
+  allergies: "Sin alergias medicamentosas registradas",
+  mobilityRisk: "Riesgo medio de caídas",
+  carePlan: "Control de presión diario, caminata asistida y revisión semanal.",
+  clinicalNotes: "Mantener hidratación. Evaluar adherencia a Metformina durante la semana.",
 };
 
 export const initialVisits: Visit[] = [
   {
-    id: 1,
+    id: "mock-visit-1",
     professional: "Dra. Lucía Pérez",
     role: "Médica clínica",
     date: "12/05/2026",
@@ -78,7 +82,7 @@ export const initialVisits: Visit[] = [
     status: "realizada",
   },
   {
-    id: 2,
+    id: "mock-visit-2",
     professional: "Martín Acosta",
     role: "Kinesiólogo",
     date: "13/05/2026",
@@ -88,7 +92,7 @@ export const initialVisits: Visit[] = [
     status: "pendiente",
   },
   {
-    id: 3,
+    id: "mock-visit-3",
     professional: "Enf. Camila Ríos",
     role: "Enfermera domiciliaria",
     date: "10/05/2026",
@@ -101,21 +105,21 @@ export const initialVisits: Visit[] = [
 
 export const initialAlerts: CareAlert[] = [
   {
-    id: 1,
+    id: "mock-alert-1",
     title: "Medicación pendiente",
     detail: "Metformina de las 12:30 todavía no fue confirmada.",
     priority: "alta",
     resolved: false,
   },
   {
-    id: 2,
+    id: "mock-alert-2",
     title: "Control atrasado",
     detail: "Falta registrar el control de presión vespertino.",
     priority: "media",
     resolved: false,
   },
   {
-    id: 3,
+    id: "mock-alert-3",
     title: "Visita médica no registrada",
     detail: "Confirmar observaciones de la última visita de enfermería.",
     priority: "baja",
@@ -124,10 +128,10 @@ export const initialAlerts: CareAlert[] = [
 ];
 
 export const contacts: CareContact[] = [
-  { id: 1, name: "Ana Gómez", role: "Hija responsable", status: "En línea", initials: "AG" },
-  { id: 2, name: "Carlos Gómez", role: "Familiar autorizado", status: "Disponible", initials: "CG" },
-  { id: 3, name: "Dra. Lucía Pérez", role: "Médica asignada", status: "Disponible", initials: "LP" },
-  { id: 4, name: "Camila Ríos", role: "Cuidadora domiciliaria", status: "Fuera de horario", initials: "CR" },
+  { id: "mock-contact-1", name: "Ana Gómez", role: "Hija responsable", status: "En línea", initials: "AG" },
+  { id: "mock-contact-2", name: "Carlos Gómez", role: "Familiar autorizado", status: "Disponible", initials: "CG" },
+  { id: "mock-contact-3", name: "Dra. Lucía Pérez", role: "Médica asignada", status: "Disponible", initials: "LP" },
+  { id: "mock-contact-4", name: "Camila Ríos", role: "Cuidadora domiciliaria", status: "Fuera de horario", initials: "CR" },
 ];
 
 export const evolutionMetrics: EvolutionMetric[] = [
