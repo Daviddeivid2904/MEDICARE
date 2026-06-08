@@ -36,44 +36,61 @@ import {
 import {
   createActivityLog,
   createAlert,
+  acceptInvitation,
+  bootstrapRegisteredUser,
+  createCareInvitation,
   createContact,
+  createInvitationEmail,
   createMedication,
+  createMedicationIntakes,
   createReminder,
   createReminderEmail,
-  createVisit,
+  createVisitSeries,
+  getCurrentSessionUser,
   getDemoUsers,
+  getPendingInvitationsForCurrentUser,
+  getScheduledTimesForMedication,
   loadMedicareData,
+  signInWithEmail,
+  signOut,
+  signUpWithPatient,
   updateAlertResolved,
   upsertMedicationIntake,
   updatePatient as savePatient,
+  updateVisitStatus,
 } from "@/lib/medicareData";
 import type {
+  AccessLevel,
   ActivityLog,
   AlertPriority,
   CareAlert,
   CareContact,
+  CareInvitation,
   Medication,
+  MedicationFrequency,
   MedicationIntake,
   MedicationReminder,
   MedicationStatus,
   Patient,
   SectionId,
   SessionUser,
+  UserPermissions,
   UserRole,
   Visit,
+  VisitRecurrence,
   VisitStatus,
 } from "@/types";
 
 type MedicationForm = {
   name: string;
   dose: string;
+  purpose: string;
   time: string;
-};
-
-type ReminderForm = {
-  medicationId: string;
-  recipientEmail: string;
-  scheduledTime: string;
+  frequencyType: MedicationFrequency;
+  intervalHours: number | null;
+  weeklyDays: number[];
+  reminderEnabled: boolean;
+  reminderEmail: string;
 };
 
 type VisitForm = {
@@ -84,6 +101,9 @@ type VisitForm = {
   procedures: string;
   notes: string;
   status: VisitStatus;
+  recurrenceType: VisitRecurrence;
+  weeklyDays: number[];
+  monthlyDay: number;
 };
 
 type AlertForm = {
@@ -95,10 +115,75 @@ type AlertForm = {
 type ContactForm = {
   name: string;
   role: string;
+  email: string;
+  roleType: UserRole;
+  accessLevel: AccessLevel;
+  permissions: UserPermissions;
+  inviteWithAccount: boolean;
   status: CareContact["status"];
 };
 
+type LoginForm = {
+  email: string;
+  password: string;
+};
+
+type SignupForm = {
+  email: string;
+  password: string;
+  fullName: string;
+  patientName: string;
+  patientAge: string;
+  seniorCanConfirmMedications: boolean;
+  seniorCanConfirmVisits: boolean;
+};
+
 const defaultActivityLog: ActivityLog[] = [];
+const weekDays = [
+  { label: "Dom", value: 0 },
+  { label: "Lun", value: 1 },
+  { label: "Mar", value: 2 },
+  { label: "Mié", value: 3 },
+  { label: "Jue", value: 4 },
+  { label: "Vie", value: 5 },
+  { label: "Sáb", value: 6 },
+];
+
+const fullPermissions: UserPermissions = {
+  canManagePatient: true,
+  canManageMedications: true,
+  canConfirmMedications: true,
+  canManageVisits: true,
+  canConfirmVisits: true,
+  canManageContacts: true,
+  canViewHistory: true,
+};
+
+const viewerPermissions: UserPermissions = {
+  canManagePatient: false,
+  canManageMedications: false,
+  canConfirmMedications: false,
+  canManageVisits: false,
+  canConfirmVisits: false,
+  canManageContacts: false,
+  canViewHistory: true,
+};
+
+const seniorLimitedPermissions: UserPermissions = {
+  ...viewerPermissions,
+  canConfirmMedications: true,
+  canConfirmVisits: true,
+};
+
+const permissionOptions: { key: keyof UserPermissions; label: string }[] = [
+  { key: "canManagePatient", label: "Editar datos del paciente" },
+  { key: "canManageMedications", label: "Agregar o editar medicación" },
+  { key: "canConfirmMedications", label: "Marcar medicación como tomada" },
+  { key: "canManageVisits", label: "Agendar o editar visitas" },
+  { key: "canConfirmVisits", label: "Confirmar visitas realizadas" },
+  { key: "canManageContacts", label: "Agregar familiares/cuidadores" },
+  { key: "canViewHistory", label: "Ver historial y días pasados" },
+];
 
 export default function Home() {
   const [hydrated, setHydrated] = useState(false);
@@ -115,12 +200,22 @@ export default function Home() {
   const [activityLog, setActivityLog] = useState<ActivityLog[]>(defaultActivityLog);
   const [reminders, setReminders] = useState<MedicationReminder[]>([]);
   const [intakes, setIntakes] = useState<MedicationIntake[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<CareInvitation[]>([]);
   const [loadingData, setLoadingData] = useState(false);
   const [appError, setAppError] = useState<string | null>(null);
 
   useEffect(() => {
-    getDemoUsers()
-      .then((users) => setDemoUsers(users))
+    Promise.all([getDemoUsers(), getCurrentSessionUser()])
+      .then(async ([users, currentUser]) => {
+        setDemoUsers(users);
+        if (currentUser?.patientId) {
+          setSession(currentUser);
+          setEntered(true);
+          await hydratePatientData(currentUser.patientId);
+          const invitations = await getPendingInvitationsForCurrentUser();
+          setPendingInvitations(invitations);
+        }
+      })
       .catch((error) => setAppError(error.message))
       .finally(() => setHydrated(true));
   }, []);
@@ -220,19 +315,90 @@ export default function Home() {
     await hydratePatientData(user.patientId);
   };
 
-  const handleLogout = () => {
-    setSession(null);
-    setEntered(false);
+  const handleEmailLogin = async (form: LoginForm) => {
+    setLoadingData(true);
+    setAppError(null);
+
+    try {
+      const user = await signInWithEmail(form.email.trim(), form.password);
+      setSession(user);
+      setEntered(true);
+      setActiveSection("dashboard");
+      if (user.patientId) await hydratePatientData(user.patientId);
+      setPendingInvitations(await getPendingInvitationsForCurrentUser());
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : "No se pudo iniciar sesión.");
+    } finally {
+      setLoadingData(false);
+    }
   };
 
-  const markMedicationAsTaken = async (id: string) => {
-    const medication = medications.find((item) => item.id === id);
+  const handleSignup = async (form: SignupForm) => {
+    setLoadingData(true);
+    setAppError(null);
+
+    try {
+      const result = await signUpWithPatient({
+        email: form.email.trim(),
+        password: form.password,
+        fullName: form.fullName.trim(),
+        patientName: form.patientName.trim(),
+        patientAge: Number(form.patientAge) || 75,
+        seniorCanConfirmMedications: form.seniorCanConfirmMedications,
+        seniorCanConfirmVisits: form.seniorCanConfirmVisits,
+      });
+
+      if (!result.user) {
+        setAppError(result.message);
+        return;
+      }
+
+      setSession(result.user);
+      setEntered(true);
+      setActiveSection("dashboard");
+      if (result.user.patientId) await hydratePatientData(result.user.patientId);
+      setPendingInvitations(await getPendingInvitationsForCurrentUser());
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : "No se pudo crear la cuenta.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handleAcceptInvitation = async (invitation: CareInvitation) => {
+    setLoadingData(true);
+    setAppError(null);
+
+    try {
+      const user = await acceptInvitation(invitation);
+      setSession(user);
+      setEntered(true);
+      setActiveSection("dashboard");
+      setPendingInvitations((current) => current.filter((item) => item.id !== invitation.id));
+      if (user.patientId) await hydratePatientData(user.patientId);
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : "No se pudo aceptar la invitación.");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!session?.isDemo) await signOut().catch(() => undefined);
+    setSession(null);
+    setEntered(false);
+    setPendingInvitations([]);
+  };
+
+  const markMedicationAsTaken = async (medication: Medication) => {
+    const baseMedication = medications.find((item) => item.id === medication.id);
     if (!patient.id) return;
 
     const intake = await upsertMedicationIntake({
       patientId: patient.id,
-      medicationId: id,
+      medicationId: medication.id,
       scheduledDate: selectedDate,
+      scheduledTime: medication.time,
       status: "tomado",
     });
 
@@ -242,11 +408,12 @@ export default function Home() {
           array.findIndex(
             (candidate) =>
               candidate.medicationId === item.medicationId &&
-              candidate.scheduledDate === item.scheduledDate,
+              candidate.scheduledDate === item.scheduledDate &&
+              candidate.scheduledTime === item.scheduledTime,
           ) === index,
       ),
     );
-    if (medication) await addLog(`${medication.name} marcada como tomada.`);
+    if (baseMedication) await addLog(`${baseMedication.name} de las ${medication.time} marcada como tomada.`);
   };
 
   const addMedication = async (form: MedicationForm) => {
@@ -254,12 +421,49 @@ export default function Home() {
     const medication = await createMedication(patient.id, {
       name: form.name.trim(),
       dose: form.dose.trim(),
+      purpose: form.purpose.trim(),
       time: form.time,
+      frequencyType: form.frequencyType,
+      intervalHours: form.frequencyType === "interval" ? form.intervalHours : 24,
+      weeklyDays: form.frequencyType === "weekly" ? form.weeklyDays : [],
+      reminderEnabled: form.reminderEnabled,
+      reminderEmail: form.reminderEnabled ? form.reminderEmail.trim() : "",
     });
+    const plannedIntakes = await createMedicationIntakes(
+      patient.id,
+      medication,
+      getDateRange(0, 14),
+    );
+    const createdReminders =
+      form.reminderEnabled && form.reminderEmail.trim()
+        ? await Promise.all(
+            getReminderTimesForMedication(medication).map(async (scheduledTime) => {
+              const reminder = await createReminder(patient.id!, {
+                medicationId: medication.id,
+                recipientEmail: form.reminderEmail.trim(),
+                scheduledTime,
+                createdByDemoUser: session?.id,
+              });
+              await createReminderEmail(patient.id!, reminder);
+              return reminder;
+            }),
+          )
+        : [];
+
     setMedications((current) =>
       [...current, medication].sort((a, b) => a.time.localeCompare(b.time)),
     );
-    await addLog(`Nueva medicación registrada: ${medication.name} a las ${medication.time}.`);
+    setIntakes((current) => [...plannedIntakes, ...current]);
+    if (createdReminders.length > 0) {
+      setReminders((current) =>
+        [...current, ...createdReminders].sort((a, b) =>
+          a.scheduledTime.localeCompare(b.scheduledTime),
+        ),
+      );
+    }
+    await addLog(
+      `Nueva medicación registrada: ${medication.name} (${formatMedicationFrequency(medication)}).`,
+    );
   };
 
   const resolveAlert = async (id: string) => {
@@ -289,17 +493,37 @@ export default function Home() {
 
   const addVisit = async (form: VisitForm) => {
     if (!patient.id) return;
-    const visit = await createVisit(patient.id, {
-      professional: form.professional.trim(),
-      role: form.role.trim(),
-      date: form.date,
-      time: form.time,
-      procedures: form.procedures.trim(),
-      notes: form.notes.trim(),
-      status: form.status,
-    });
-    setVisits((current) => [visit, ...current]);
-    await addLog(`Visita registrada: ${visit.professional} (${visit.status}).`);
+    const recurrenceGroupId =
+      form.recurrenceType === "once" ? null : createClientUuid();
+    const dates = getVisitSeriesDates(form);
+    const createdVisits = await createVisitSeries(
+      patient.id,
+      dates.map((date) => ({
+        professional: form.professional.trim(),
+        role: form.role.trim(),
+        date,
+        time: form.time,
+        procedures: form.procedures.trim(),
+        notes: form.notes.trim(),
+        status: form.recurrenceType === "once" ? form.status : "pendiente",
+        recurrenceType: form.recurrenceType,
+        recurrenceGroupId,
+        weeklyDays: form.recurrenceType === "weekly" ? form.weeklyDays : [],
+        monthlyDay: form.recurrenceType === "monthly" ? form.monthlyDay : null,
+      })),
+    );
+    setVisits((current) => [...createdVisits, ...current]);
+    await addLog(
+      `${createdVisits.length} visita${createdVisits.length === 1 ? "" : "s"} registrada${createdVisits.length === 1 ? "" : "s"}: ${form.professional.trim()} (${formatVisitRecurrence(form)}).`,
+    );
+  };
+
+  const changeVisitStatus = async (id: string, status: VisitStatus) => {
+    const updatedVisit = await updateVisitStatus(id, status);
+    setVisits((current) =>
+      current.map((visit) => (visit.id === updatedVisit.id ? updatedVisit : visit)),
+    );
+    await addLog(`Visita actualizada: ${updatedVisit.professional} (${updatedVisit.status}).`);
   };
 
   const addContact = async (form: ContactForm) => {
@@ -307,30 +531,41 @@ export default function Home() {
     const contact = await createContact(patient.id, {
       name: form.name.trim(),
       role: form.role.trim(),
+      email: form.email.trim(),
       status: form.status,
       initials: getInitials(form.name),
+      accessLevel: form.accessLevel,
+      permissions: form.permissions,
+      invitationStatus: form.inviteWithAccount ? "pendiente" : "sin cuenta",
     });
+
+    if (form.inviteWithAccount && form.email.trim() && !session?.isDemo) {
+      const invitation = await createCareInvitation(patient.id, {
+        contactId: contact.id,
+        inviteeEmail: form.email.trim(),
+        inviteeName: form.name.trim(),
+        roleLabel: form.role.trim(),
+        roleType: form.roleType,
+        accessLevel: form.accessLevel,
+        permissions: form.permissions,
+      });
+      await createInvitationEmail(patient.id, invitation);
+    }
+
     setContacts((current) => [...current, contact]);
-    await addLog(`Nuevo contacto agregado: ${contact.name}.`);
+    await addLog(
+      form.inviteWithAccount
+        ? session?.isDemo
+          ? `Invitación demo simulada para ${contact.email}.`
+          : `Invitación enviada a ${contact.email}.`
+        : `Nuevo contacto agregado: ${contact.name}.`,
+    );
   };
 
   const updatePatient = async (updatedPatient: Patient) => {
     const savedPatient = await savePatient(updatedPatient);
     setPatient(savedPatient);
     await addLog(`Datos del paciente actualizados: ${savedPatient.name}.`);
-  };
-
-  const addReminder = async (form: ReminderForm) => {
-    if (!patient.id) return;
-    const reminder = await createReminder(patient.id, {
-      medicationId: form.medicationId,
-      recipientEmail: form.recipientEmail.trim(),
-      scheduledTime: form.scheduledTime,
-      createdByDemoUser: session?.id,
-    });
-    await createReminderEmail(patient.id, reminder);
-    setReminders((current) => [...current, reminder].sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime)));
-    await addLog(`Recordatorio por email programado para ${reminder.recipientEmail}.`);
   };
 
   if (!entered) {
@@ -341,9 +576,13 @@ export default function Home() {
     return (
       <LoginScreen
         demoUsers={demoUsers}
+        pendingInvitations={pendingInvitations}
         loading={!hydrated || loadingData}
         error={appError}
-        onLogin={handleLogin}
+        onDemoLogin={handleLogin}
+        onEmailLogin={handleEmailLogin}
+        onSignup={handleSignup}
+        onAcceptInvitation={handleAcceptInvitation}
       />
     );
   }
@@ -352,13 +591,15 @@ export default function Home() {
     return (
       <SeniorPortal
         patient={patient}
-        medications={visibleMedications}
         baseMedications={medications}
         intakes={intakes}
         visits={visits}
         reminders={reminders}
         loading={loadingData}
         error={appError}
+        permissions={session.permissions}
+        onMarkTaken={markMedicationAsTaken}
+        onVisitStatusChange={changeVisitStatus}
         onLogout={handleLogout}
       />
     );
@@ -372,6 +613,23 @@ export default function Home() {
       user={session}
       onLogout={handleLogout}
     >
+      {pendingInvitations.length > 0 ? (
+        <div className="mb-5 rounded-2xl border border-violet-100 bg-violet-50 p-4 text-sm text-violet-900">
+          <p className="font-bold">Tenés invitaciones pendientes</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {pendingInvitations.map((invitation) => (
+              <button
+                key={invitation.id}
+                onClick={() => handleAcceptInvitation(invitation)}
+                disabled={loadingData}
+                className="rounded-xl bg-violet-600 px-4 py-2.5 font-semibold text-white transition hover:bg-violet-700 disabled:opacity-60"
+              >
+                Aceptar acceso como {invitation.roleLabel}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {loadingData ? (
         <div className="mb-5 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
           <Loader2 className="animate-spin" size={18} />
@@ -398,6 +656,7 @@ export default function Home() {
       {activeSection === "medicacion" ? (
         <MedicationSection
           medications={visibleMedications}
+          baseMedications={medications}
           reminders={reminders}
           intakes={intakes}
           visits={visits}
@@ -405,9 +664,9 @@ export default function Home() {
           onDateChange={setSelectedDate}
           adherence={adherence}
           onAddMedication={addMedication}
-          onAddReminder={addReminder}
           onMarkTaken={markMedicationAsTaken}
-          canEdit
+          canEdit={session.permissions.canManageMedications}
+          canConfirm={session.permissions.canConfirmMedications}
         />
       ) : null}
       {activeSection === "visitas" ? (
@@ -416,7 +675,9 @@ export default function Home() {
           selectedDate={selectedDate}
           onDateChange={setSelectedDate}
           onAddVisit={addVisit}
-          canEdit
+          onVisitStatusChange={changeVisitStatus}
+          canEdit={session.permissions.canManageVisits}
+          canConfirm={session.permissions.canConfirmVisits}
         />
       ) : null}
       {activeSection === "alertas" ? (
@@ -431,7 +692,7 @@ export default function Home() {
         <FamilySection
           contacts={contacts}
           onAddContact={addContact}
-          canEdit
+          canEdit={session.permissions.canManageContacts}
         />
       ) : null}
       {activeSection === "historial" ? (
@@ -443,53 +704,225 @@ export default function Home() {
 
 function LoginScreen({
   demoUsers,
+  pendingInvitations,
   loading,
   error,
-  onLogin,
+  onDemoLogin,
+  onEmailLogin,
+  onSignup,
+  onAcceptInvitation,
 }: {
   demoUsers: SessionUser[];
+  pendingInvitations: CareInvitation[];
   loading: boolean;
   error: string | null;
-  onLogin: (user: SessionUser) => void;
+  onDemoLogin: (user: SessionUser) => void;
+  onEmailLogin: (form: LoginForm) => void;
+  onSignup: (form: SignupForm) => void;
+  onAcceptInvitation: (invitation: CareInvitation) => void;
 }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [loginForm, setLoginForm] = useState<LoginForm>({ email: "", password: "" });
+  const [signupForm, setSignupForm] = useState<SignupForm>({
+    email: "",
+    password: "",
+    fullName: "",
+    patientName: "",
+    patientAge: "75",
+    seniorCanConfirmMedications: true,
+    seniorCanConfirmVisits: false,
+  });
+
   return (
-    <main className="health-gradient flex min-h-screen items-center justify-center px-5 py-10">
-      <section className="w-full max-w-2xl rounded-2xl border border-white bg-white/90 p-6 shadow-xl shadow-blue-900/10 backdrop-blur">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
-          <LogIn size={24} />
-        </div>
-        <h1 className="mt-6 text-3xl font-bold text-slate-950">Ingreso MEDICARE</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-500">
-          Elegí un usuario demo. La información se guarda en Supabase.
-        </p>
-        {error ? (
-          <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-            {error}
+    <main className="health-gradient min-h-screen px-5 py-10">
+      <section className="mx-auto grid w-full max-w-6xl gap-5 lg:grid-cols-[1fr_0.9fr]">
+        <article className="rounded-2xl border border-white bg-white/90 p-6 shadow-xl shadow-blue-900/10 backdrop-blur">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
+            <LogIn size={24} />
           </div>
-        ) : null}
-        <div className="mt-6 grid gap-3 md:grid-cols-3">
-          {demoUsers.map((user) => (
-            <button
-              key={user.id}
-              onClick={() => onLogin(user)}
-              disabled={loading}
-              className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
-            >
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-sm font-bold text-blue-700">
-                {user.initials}
-              </div>
-              <p className="mt-4 font-bold text-slate-950">{user.name}</p>
-              <p className="mt-1 text-sm text-slate-500">{user.role}</p>
-              <p className="mt-3 text-xs font-semibold text-blue-700">{user.email}</p>
-            </button>
-          ))}
-        </div>
-        {loading ? (
-          <p className="mt-5 flex items-center gap-2 text-sm font-semibold text-blue-700">
-            <Loader2 className="animate-spin" size={17} />
-            Cargando datos...
+          <h1 className="mt-6 text-3xl font-bold text-slate-950">Ingreso MEDICARE</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Iniciá sesión o creá un paciente desde cero. La demo queda disponible aparte.
           </p>
-        ) : null}
+
+          <div className="mt-6 grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-sm font-bold">
+            <button
+              onClick={() => setMode("login")}
+              className={`rounded-lg px-4 py-2 ${mode === "login" ? "bg-white text-blue-700 shadow-sm" : "text-slate-500"}`}
+            >
+              Iniciar sesión
+            </button>
+            <button
+              onClick={() => setMode("signup")}
+              className={`rounded-lg px-4 py-2 ${mode === "signup" ? "bg-white text-blue-700 shadow-sm" : "text-slate-500"}`}
+            >
+              Registrarse
+            </button>
+          </div>
+
+          {error ? (
+            <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {error}
+            </div>
+          ) : null}
+
+          {mode === "login" ? (
+            <form
+              className="mt-5 space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onEmailLogin(loginForm);
+              }}
+            >
+              <TextField
+                label="Email"
+                type="email"
+                value={loginForm.email}
+                onChange={(value) => setLoginForm((current) => ({ ...current, email: value }))}
+                required
+              />
+              <TextField
+                label="Contraseña"
+                type="password"
+                value={loginForm.password}
+                onChange={(value) => setLoginForm((current) => ({ ...current, password: value }))}
+                required
+              />
+              <button
+                disabled={loading}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                {loading ? <Loader2 className="animate-spin" size={17} /> : <LogIn size={17} />}
+                Entrar
+              </button>
+            </form>
+          ) : (
+            <form
+              className="mt-5 space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSignup(signupForm);
+              }}
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextField
+                  label="Tu nombre"
+                  value={signupForm.fullName}
+                  onChange={(value) => setSignupForm((current) => ({ ...current, fullName: value }))}
+                  required
+                />
+                <TextField
+                  label="Nombre de la persona mayor"
+                  value={signupForm.patientName}
+                  onChange={(value) => setSignupForm((current) => ({ ...current, patientName: value }))}
+                  required
+                />
+                <TextField
+                  label="Edad"
+                  type="number"
+                  value={signupForm.patientAge}
+                  onChange={(value) => setSignupForm((current) => ({ ...current, patientAge: value }))}
+                  required
+                />
+                <TextField
+                  label="Email"
+                  type="email"
+                  value={signupForm.email}
+                  onChange={(value) => setSignupForm((current) => ({ ...current, email: value }))}
+                  required
+                />
+              </div>
+              <TextField
+                label="Contraseña"
+                type="password"
+                value={signupForm.password}
+                onChange={(value) => setSignupForm((current) => ({ ...current, password: value }))}
+                required
+              />
+              <label className="flex gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={signupForm.seniorCanConfirmMedications}
+                  onChange={(event) =>
+                    setSignupForm((current) => ({
+                      ...current,
+                      seniorCanConfirmMedications: event.target.checked,
+                    }))
+                  }
+                  className="mt-1"
+                />
+                La persona mayor puede marcar medicación como tomada
+              </label>
+              <label className="flex gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={signupForm.seniorCanConfirmVisits}
+                  onChange={(event) =>
+                    setSignupForm((current) => ({
+                      ...current,
+                      seniorCanConfirmVisits: event.target.checked,
+                    }))
+                  }
+                  className="mt-1"
+                />
+                La persona mayor puede confirmar si una visita ocurrió
+              </label>
+              <button
+                disabled={loading}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                {loading ? <Loader2 className="animate-spin" size={17} /> : <Plus size={17} />}
+                Crear cuenta y paciente
+              </button>
+            </form>
+          )}
+
+          {pendingInvitations.length > 0 ? (
+            <div className="mt-6 rounded-xl border border-violet-100 bg-violet-50 p-4">
+              <p className="text-sm font-bold text-violet-900">Invitaciones pendientes</p>
+              <div className="mt-3 space-y-2">
+                {pendingInvitations.map((invitation) => (
+                  <button
+                    key={invitation.id}
+                    onClick={() => onAcceptInvitation(invitation)}
+                    disabled={loading}
+                    className="w-full rounded-xl bg-white px-4 py-3 text-left text-sm font-semibold text-violet-800 shadow-sm"
+                  >
+                    Aceptar acceso como {invitation.roleLabel}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </article>
+
+        <article className="rounded-2xl border border-white bg-white/90 p-6 shadow-xl shadow-blue-900/10 backdrop-blur">
+          <h2 className="text-xl font-bold text-slate-950">Acceder a la demo</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Entrá rápido con datos cargados para presentar el MVP.
+          </p>
+          <div className="mt-6 grid gap-3">
+            {demoUsers.map((user) => (
+              <button
+                key={user.id}
+                onClick={() => onDemoLogin(user)}
+                disabled={loading}
+                className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-sm font-bold text-blue-700">
+                    {user.initials}
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-950">{user.name}</p>
+                    <p className="text-sm text-slate-500">{user.role}</p>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs font-semibold text-blue-700">{user.email}</p>
+              </button>
+            ))}
+          </div>
+        </article>
       </section>
     </main>
   );
@@ -545,45 +978,61 @@ function DayCalendar({
     <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-bold text-slate-950">Calendario de cuidado</h2>
+          <h2 className="text-lg font-bold text-slate-950">Días recientes</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Verde: día completo. Amarillo: pendiente hoy. Rojo: faltó algo.
+            Historial de medicamentos y visitas por fecha.
           </p>
         </div>
-        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-          {formatSelectedDate(selectedDate)}
-        </span>
+        <div className="flex flex-wrap gap-2 text-xs font-bold">
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Completo</span>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">Pendiente</span>
+          <span className="rounded-full bg-rose-50 px-3 py-1 text-rose-700">Faltó algo</span>
+        </div>
       </div>
-      <div className="mt-4 grid grid-cols-7 gap-2">
-        {summaries.map((day) => (
-          <button
-            key={day.date}
-            onClick={() => onSelectDate(day.date)}
-            className={`min-h-24 rounded-xl border p-2 text-left transition ${
-              selectedDate === day.date
-                ? "border-blue-600 ring-2 ring-blue-100"
-                : "border-slate-200 hover:border-blue-200"
-            }`}
-          >
-            <span
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${
-                day.tone === "green"
-                  ? "bg-emerald-100 text-emerald-700"
-                  : day.tone === "red"
-                    ? "bg-rose-100 text-rose-700"
-                    : "bg-amber-100 text-amber-700"
+      <div className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-sm font-bold text-blue-700">
+        Día seleccionado: {formatSelectedDate(selectedDate)}
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        {summaries.map((day) => {
+          const display = getDayTileDisplay(day.date);
+          const toneClass =
+            day.tone === "green"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : day.tone === "red"
+                ? "border-rose-200 bg-rose-50 text-rose-800"
+                : "border-amber-200 bg-amber-50 text-amber-800";
+
+          return (
+            <button
+              key={day.date}
+              onClick={() => onSelectDate(day.date)}
+              className={`min-h-32 rounded-xl border p-3 text-left transition ${
+                selectedDate === day.date
+                  ? "border-blue-600 bg-white ring-2 ring-blue-100"
+                  : "border-slate-200 bg-white hover:border-blue-200"
               }`}
             >
-              {day.label}
-            </span>
-            <p className="mt-2 text-xs font-semibold text-slate-700">
-              {day.taken}/{day.total} medic.
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {day.completedVisits + day.pendingVisits} visitas
-            </p>
-          </button>
-        ))}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">
+                    {display.weekday}
+                  </p>
+                  <p className="mt-1 text-3xl font-bold text-slate-950">{display.dayNumber}</p>
+                  <p className="text-xs font-semibold text-slate-500">{display.month}</p>
+                </div>
+                <span className={`rounded-full border px-2 py-1 text-[11px] font-bold ${toneClass}`}>
+                  {getDayToneLabel(day.tone)}
+                </span>
+              </div>
+              <p className="mt-4 text-xs font-semibold text-slate-700">
+                {day.taken}/{day.total} medic.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {day.completedVisits + day.pendingVisits} visitas
+              </p>
+            </button>
+          );
+        })}
       </div>
     </article>
   );
@@ -591,29 +1040,33 @@ function DayCalendar({
 
 function SeniorPortal({
   patient,
-  medications,
   baseMedications,
   intakes,
   visits,
   reminders,
   loading,
   error,
+  permissions,
+  onMarkTaken,
+  onVisitStatusChange,
   onLogout,
 }: {
   patient: Patient;
-  medications: Medication[];
   baseMedications: Medication[];
   intakes: MedicationIntake[];
   visits: Visit[];
   reminders: MedicationReminder[];
   loading: boolean;
   error: string | null;
+  permissions: UserPermissions;
+  onMarkTaken: (medication: Medication) => void;
+  onVisitStatusChange: (id: string, status: VisitStatus) => void;
   onLogout: () => void;
 }) {
   const [selectedDate, setSelectedDate] = useState(getTodayIso());
   const dailyMedications = getDailyMedications(baseMedications, intakes, selectedDate);
   const daySummaries = buildDaySummaries(baseMedications, intakes, visits);
-  const pendingMedications = medications
+  const pendingMedications = dailyMedications
     .filter((medication) => medication.status !== "tomado")
     .sort((a, b) => a.time.localeCompare(b.time));
   const nextVisits = visits
@@ -694,7 +1147,7 @@ function SeniorPortal({
           <div className="mt-4 space-y-3">
             {dailyMedications.length > 0 ? (
               dailyMedications.map((medication) => (
-                <div key={medication.id} className="rounded-xl bg-slate-50 p-4">
+                <div key={medication.scheduleKey ?? `${medication.id}-${medication.time}`} className="rounded-xl bg-slate-50 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-lg font-bold">{medication.name}</p>
@@ -703,6 +1156,15 @@ function SeniorPortal({
                     <div className="text-right">
                       <p className="text-2xl font-bold text-blue-700">{medication.time}</p>
                       <StatusBadge value={medication.status} />
+                      {permissions.canConfirmMedications ? (
+                        <button
+                          onClick={() => onMarkTaken(medication)}
+                          disabled={medication.status === "tomado"}
+                          className="mt-3 rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-200 disabled:text-slate-500"
+                        >
+                          {medication.status === "tomado" ? "Ya tomada" : "Ya la tomé"}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -726,6 +1188,14 @@ function SeniorPortal({
                   <p className="mt-2 text-sm font-semibold text-slate-700">
                     {visit.date} · {visit.time}
                   </p>
+                  {permissions.canConfirmVisits && visit.status === "pendiente" ? (
+                    <button
+                      onClick={() => onVisitStatusChange(visit.id, "realizada")}
+                      className="mt-3 rounded-xl bg-violet-600 px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      Confirmar que vino
+                    </button>
+                  ) : null}
                 </div>
               ))
             ) : (
@@ -1008,6 +1478,7 @@ function PatientCard({
 
 function MedicationSection({
   medications,
+  baseMedications,
   reminders,
   intakes,
   visits,
@@ -1015,11 +1486,12 @@ function MedicationSection({
   onDateChange,
   adherence,
   onAddMedication,
-  onAddReminder,
   onMarkTaken,
   canEdit,
+  canConfirm,
 }: {
   medications: Medication[];
+  baseMedications: Medication[];
   reminders: MedicationReminder[];
   intakes: MedicationIntake[];
   visits: Visit[];
@@ -1027,12 +1499,12 @@ function MedicationSection({
   onDateChange: (date: string) => void;
   adherence: number;
   onAddMedication: (form: MedicationForm) => void;
-  onAddReminder: (form: ReminderForm) => void;
-  onMarkTaken: (id: string) => void;
+  onMarkTaken: (medication: Medication) => void;
   canEdit: boolean;
+  canConfirm: boolean;
 }) {
   const taken = medications.filter((medication) => medication.status === "tomado").length;
-  const daySummaries = buildDaySummaries(medications, intakes, visits);
+  const daySummaries = buildDaySummaries(baseMedications, intakes, visits);
 
   return (
     <section>
@@ -1057,11 +1529,7 @@ function MedicationSection({
               text="Podés confirmar tomas, consultar horarios y agregar recordatorios por email. La carga del tratamiento queda para el perfil médico."
             />
           )}
-          <AddReminderForm
-            medications={medications}
-            reminders={reminders}
-            onAddReminder={onAddReminder}
-          />
+          <ReminderList reminders={reminders} />
         </div>
         <div>
           <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1079,10 +1547,12 @@ function MedicationSection({
             </div>
           </div>
 
+          <TreatmentList medications={baseMedications} />
+
           <div className="grid gap-4">
             {medications.map((medication) => (
               <article
-                key={medication.id}
+                key={medication.scheduleKey ?? `${medication.id}-${medication.time}`}
                 className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-[1fr_auto_auto] md:items-center"
               >
                 <div className="flex items-start gap-4">
@@ -1092,6 +1562,7 @@ function MedicationSection({
                   <div>
                     <h2 className="font-bold text-slate-950">{medication.name}</h2>
                     <p className="mt-1 text-sm text-slate-500">{medication.dose}</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{medication.purpose}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 text-slate-600">
@@ -1099,14 +1570,20 @@ function MedicationSection({
                   <span className="font-semibold">{medication.time}</span>
                   <StatusBadge value={medication.status} />
                 </div>
-                <button
-                  onClick={() => onMarkTaken(medication.id)}
-                  disabled={medication.status === "tomado"}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-                >
-                  <Check size={17} />
-                  {medication.status === "tomado" ? "Confirmado" : "Marcar tomado"}
-                </button>
+                {canConfirm ? (
+                  <button
+                    onClick={() => onMarkTaken(medication)}
+                    disabled={medication.status === "tomado"}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    <Check size={17} />
+                    {medication.status === "tomado" ? "Confirmado" : "Marcar tomado"}
+                  </button>
+                ) : (
+                  <span className="rounded-xl bg-slate-100 px-4 py-2.5 text-center text-sm font-semibold text-slate-500">
+                    Solo lectura
+                  </span>
+                )}
               </article>
             ))}
           </div>
@@ -1124,14 +1601,36 @@ function AddMedicationForm({
   const [form, setForm] = useState<MedicationForm>({
     name: "",
     dose: "",
+    purpose: "",
     time: "09:00",
+    frequencyType: "daily",
+    intervalHours: null,
+    weeklyDays: [1],
+    reminderEnabled: false,
+    reminderEmail: "familiar@medicare.demo",
   });
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!form.name.trim() || !form.dose.trim() || !form.time) return;
-    onAddMedication(form);
-    setForm({ name: "", dose: "", time: "09:00" });
+    if (!form.name.trim() || !form.dose.trim() || !form.purpose.trim() || !form.time) return;
+    if (form.frequencyType === "weekly" && form.weeklyDays.length === 0) return;
+    if (form.reminderEnabled && !form.reminderEmail.trim()) return;
+    onAddMedication({
+      ...form,
+      intervalHours: form.frequencyType === "interval" ? form.intervalHours ?? 12 : 24,
+      weeklyDays: form.frequencyType === "weekly" ? form.weeklyDays : [],
+    });
+    setForm({
+      name: "",
+      dose: "",
+      purpose: "",
+      time: "09:00",
+      frequencyType: "daily",
+      intervalHours: null,
+      weeklyDays: [1],
+      reminderEnabled: false,
+      reminderEmail: "familiar@medicare.demo",
+    });
   };
 
   return (
@@ -1152,13 +1651,105 @@ function AddMedicationForm({
           placeholder="Ej. 100 mg"
           required
         />
+        <TextAreaField
+          label="Para qué sirve"
+          value={form.purpose}
+          onChange={(value) => setForm((current) => ({ ...current, purpose: value }))}
+          placeholder="Ej. Control de presión arterial"
+          required
+        />
         <TextField
-          label="Horario"
+          label="Primer horario"
           type="time"
           value={form.time}
           onChange={(value) => setForm((current) => ({ ...current, time: value }))}
           required
         />
+        <SelectField
+          label="Frecuencia"
+          value={getFrequencySelectValue(form)}
+          onChange={(value) =>
+            setForm((current) => {
+              if (value === "daily") {
+                return { ...current, frequencyType: "daily", intervalHours: null };
+              }
+              if (value === "weekly") {
+                return { ...current, frequencyType: "weekly", intervalHours: null };
+              }
+              return {
+                ...current,
+                frequencyType: "interval",
+                intervalHours: Number(value.replace("interval-", "")),
+              };
+            })
+          }
+          options={[
+            { label: "Diario", value: "daily" },
+            { label: "Semanal", value: "weekly" },
+            { label: "Cada 12 horas", value: "interval-12" },
+            { label: "Cada 8 horas", value: "interval-8" },
+          ]}
+        />
+        {form.frequencyType === "weekly" ? (
+          <div>
+            <p className="text-sm font-semibold text-slate-700">Días de la semana</p>
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              {weekDays.map((day) => {
+                const active = form.weeklyDays.includes(day.value);
+                return (
+                  <button
+                    key={day.value}
+                    type="button"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        weeklyDays: active
+                          ? current.weeklyDays.filter((value) => value !== day.value)
+                          : [...current.weeklyDays, day.value].sort((a, b) => a - b),
+                      }))
+                    }
+                    className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                      active
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-slate-200 text-slate-600 hover:border-blue-200"
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <input
+            type="checkbox"
+            checked={form.reminderEnabled}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                reminderEnabled: event.target.checked,
+              }))
+            }
+            className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600"
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">Recordatorio por email</span>
+            <span className="mt-1 block text-sm leading-5 text-slate-500">
+              Si está marcado, MEDICARE deja el recordatorio en cola de envío.
+            </span>
+          </span>
+        </label>
+        {form.reminderEnabled ? (
+          <TextField
+            label="Email para recordatorio"
+            type="email"
+            value={form.reminderEmail}
+            onChange={(value) => setForm((current) => ({ ...current, reminderEmail: value }))}
+            placeholder="familiar@email.com"
+            required
+          />
+        ) : null}
       </div>
       <button className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700">
         <Plus size={17} />
@@ -1168,96 +1759,74 @@ function AddMedicationForm({
   );
 }
 
-function AddReminderForm({
-  medications,
-  reminders,
-  onAddReminder,
-}: {
-  medications: Medication[];
-  reminders: MedicationReminder[];
-  onAddReminder: (form: ReminderForm) => void;
-}) {
-  const pendingMedication = medications.find((medication) => medication.status !== "tomado");
-  const [form, setForm] = useState<ReminderForm>({
-    medicationId: pendingMedication?.id ?? medications[0]?.id ?? "",
-    recipientEmail: "familiar@medicare.demo",
-    scheduledTime: pendingMedication?.time ?? "09:00",
-  });
-
-  useEffect(() => {
-    if (!form.medicationId && medications[0]) {
-      setForm((current) => ({
-        ...current,
-        medicationId: medications[0].id,
-        scheduledTime: medications[0].time,
-      }));
-    }
-  }, [form.medicationId, medications]);
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!form.medicationId || !form.recipientEmail.trim() || !form.scheduledTime) return;
-    onAddReminder(form);
-    setForm((current) => ({ ...current, recipientEmail: "", scheduledTime: "09:00" }));
-  };
-
+function ReminderList({ reminders }: { reminders: MedicationReminder[] }) {
   return (
-    <form onSubmit={handleSubmit} className="h-fit rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <article className="h-fit rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-50 text-violet-700">
           <Mail size={21} />
         </div>
         <div>
-          <h2 className="text-lg font-bold text-slate-950">Recordatorio por email</h2>
-          <p className="text-sm text-slate-500">MVP: queda en cola de envío en Supabase.</p>
+          <h2 className="text-lg font-bold text-slate-950">Recordatorios activos</h2>
+          <p className="text-sm text-slate-500">Se crean al marcar la casilla del medicamento.</p>
         </div>
       </div>
-      <div className="mt-4 space-y-4">
-        <SelectField
-          label="Medicamento"
-          value={form.medicationId}
-          onChange={(value) => {
-            const medication = medications.find((item) => item.id === value);
-            setForm((current) => ({
-              ...current,
-              medicationId: value,
-              scheduledTime: medication?.time ?? current.scheduledTime,
-            }));
-          }}
-          options={medications.map((medication) => ({
-            label: `${medication.name} · ${medication.time}`,
-            value: medication.id,
-          }))}
-        />
-        <TextField
-          label="Email de destino"
-          type="email"
-          value={form.recipientEmail}
-          onChange={(value) => setForm((current) => ({ ...current, recipientEmail: value }))}
-          placeholder="familiar@email.com"
-          required
-        />
-        <TextField
-          label="Hora de recordatorio"
-          type="time"
-          value={form.scheduledTime}
-          onChange={(value) => setForm((current) => ({ ...current, scheduledTime: value }))}
-          required
-        />
-      </div>
-      <button className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-700">
-        <Plus size={17} />
-        Programar recordatorio
-      </button>
       <div className="mt-5 space-y-2">
-        {reminders.map((reminder) => (
-          <div key={reminder.id} className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            <span className="font-bold text-slate-800">{reminder.scheduledTime}</span>{" "}
-            {reminder.medicationName} · {reminder.recipientEmail}
+        {reminders.length > 0 ? (
+          reminders.map((reminder) => (
+            <div key={reminder.id} className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="font-bold text-slate-800">{reminder.scheduledTime}</span>{" "}
+              {reminder.medicationName} · {reminder.recipientEmail}
+            </div>
+          ))
+        ) : (
+          <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
+            No hay recordatorios por email activados.
+          </p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function TreatmentList({ medications }: { medications: Medication[] }) {
+  return (
+    <article className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-950">Tratamiento completo</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Medicamentos indicados, frecuencia y objetivo de cada uno.
+          </p>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+          {medications.length} medicamentos
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3">
+        {medications.map((medication) => (
+          <div key={medication.id} className="rounded-xl bg-slate-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="font-bold text-slate-950">{medication.name}</p>
+                <p className="mt-1 text-sm text-slate-500">{medication.dose}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{medication.purpose}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                  {formatMedicationFrequency(medication)}
+                </span>
+                {medication.reminderEnabled ? (
+                  <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+                    Recordatorio
+                  </span>
+                ) : null}
+              </div>
+            </div>
           </div>
         ))}
       </div>
-    </form>
+    </article>
   );
 }
 
@@ -1266,13 +1835,17 @@ function VisitsSection({
   selectedDate,
   onDateChange,
   onAddVisit,
+  onVisitStatusChange,
   canEdit,
+  canConfirm,
 }: {
   visits: Visit[];
   selectedDate: string;
   onDateChange: (date: string) => void;
   onAddVisit: (form: VisitForm) => void;
+  onVisitStatusChange: (id: string, status: VisitStatus) => void;
   canEdit: boolean;
+  canConfirm: boolean;
 }) {
   const selectedDayVisits = visits
     .filter((visit) => (visit.dateIso ?? toIsoDate(visit.date)) === selectedDate)
@@ -1312,16 +1885,22 @@ function VisitsSection({
             title={`Visitas del día (${formatSelectedDate(selectedDate)})`}
             emptyText="No hay visitas para este día."
             visits={selectedDayVisits}
+            canConfirm={canConfirm}
+            onVisitStatusChange={onVisitStatusChange}
           />
           <VisitGroup
             title="Próximas visitas agendadas"
             emptyText="No hay visitas pendientes."
             visits={pendingVisits}
+            canConfirm={canConfirm}
+            onVisitStatusChange={onVisitStatusChange}
           />
           <VisitGroup
             title="Historial de visitas realizadas"
             emptyText="Todavía no hay visitas realizadas."
             visits={completedVisits}
+            canConfirm={false}
+            onVisitStatusChange={onVisitStatusChange}
           />
         </div>
       </div>
@@ -1333,10 +1912,14 @@ function VisitGroup({
   title,
   emptyText,
   visits,
+  canConfirm,
+  onVisitStatusChange,
 }: {
   title: string;
   emptyText: string;
   visits: Visit[];
+  canConfirm: boolean;
+  onVisitStatusChange: (id: string, status: VisitStatus) => void;
 }) {
   return (
     <div>
@@ -1348,7 +1931,14 @@ function VisitGroup({
       </div>
       <div className="grid gap-4">
         {visits.length > 0 ? (
-          visits.map((visit) => <VisitCard key={visit.id} visit={visit} />)
+          visits.map((visit) => (
+            <VisitCard
+              key={visit.id}
+              visit={visit}
+              canConfirm={canConfirm}
+              onVisitStatusChange={onVisitStatusChange}
+            />
+          ))
         ) : (
           <p className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm">
             {emptyText}
@@ -1359,7 +1949,15 @@ function VisitGroup({
   );
 }
 
-function VisitCard({ visit }: { visit: Visit }) {
+function VisitCard({
+  visit,
+  canConfirm,
+  onVisitStatusChange,
+}: {
+  visit: Visit;
+  canConfirm: boolean;
+  onVisitStatusChange: (id: string, status: VisitStatus) => void;
+}) {
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -1373,10 +1971,26 @@ function VisitCard({ visit }: { visit: Visit }) {
             <p className="mt-2 text-sm font-semibold text-slate-700">
               {visit.date} · {visit.time}
             </p>
+            {visit.recurrenceType !== "once" ? (
+              <p className="mt-2 w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+                {formatVisitRecurrence(visit)}
+              </p>
+            ) : null}
           </div>
         </div>
         <StatusBadge value={visit.status} />
       </div>
+      {canConfirm && visit.status === "pendiente" ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            onClick={() => onVisitStatusChange(visit.id, "realizada")}
+            className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-700"
+          >
+            <Check size={17} />
+            Confirmar realizada
+          </button>
+        </div>
+      ) : null}
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         <div className="rounded-xl bg-slate-50 p-4">
           <p className="text-sm font-bold text-slate-700">Procedimientos</p>
@@ -1392,28 +2006,38 @@ function VisitCard({ visit }: { visit: Visit }) {
 }
 
 function AddVisitForm({ onAddVisit }: { onAddVisit: (form: VisitForm) => void }) {
+  const today = getTodayIso();
   const [form, setForm] = useState<VisitForm>({
     professional: "",
     role: "",
-    date: new Date().toISOString().slice(0, 10),
+    date: today,
     time: "10:00",
     procedures: "",
     notes: "",
     status: "pendiente",
+    recurrenceType: "once",
+    weeklyDays: [getWeekdayFromIso(today)],
+    monthlyDay: getDayOfMonthFromIso(today),
   });
+  const plannedDates = getVisitSeriesDates(form);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!form.professional.trim() || !form.role.trim()) return;
+    if (form.recurrenceType === "weekly" && form.weeklyDays.length === 0) return;
     onAddVisit(form);
+    const nextToday = getTodayIso();
     setForm({
       professional: "",
       role: "",
-      date: new Date().toISOString().slice(0, 10),
+      date: nextToday,
       time: "10:00",
       procedures: "",
       notes: "",
       status: "pendiente",
+      recurrenceType: "once",
+      weeklyDays: [getWeekdayFromIso(nextToday)],
+      monthlyDay: getDayOfMonthFromIso(nextToday),
     });
   };
 
@@ -1440,7 +2064,17 @@ function AddVisitForm({ onAddVisit }: { onAddVisit: (form: VisitForm) => void })
             label="Fecha"
             type="date"
             value={form.date}
-            onChange={(value) => setForm((current) => ({ ...current, date: value }))}
+            onChange={(value) =>
+              setForm((current) => ({
+                ...current,
+                date: value,
+                weeklyDays:
+                  current.recurrenceType === "weekly" && current.weeklyDays.length === 1
+                    ? [getWeekdayFromIso(value)]
+                    : current.weeklyDays,
+                monthlyDay: getDayOfMonthFromIso(value),
+              }))
+            }
             required
           />
           <TextField
@@ -1451,6 +2085,82 @@ function AddVisitForm({ onAddVisit }: { onAddVisit: (form: VisitForm) => void })
             required
           />
         </div>
+        <SelectField
+          label="Repetición"
+          value={form.recurrenceType}
+          onChange={(value) =>
+            setForm((current) => ({
+              ...current,
+              recurrenceType: value as VisitRecurrence,
+              weeklyDays:
+                value === "weekly" && current.weeklyDays.length === 0
+                  ? [getWeekdayFromIso(current.date)]
+                  : current.weeklyDays,
+              monthlyDay:
+                value === "monthly" ? getDayOfMonthFromIso(current.date) : current.monthlyDay,
+            }))
+          }
+          options={[
+            { label: "Una sola vez", value: "once" },
+            { label: "Diaria", value: "daily" },
+            { label: "Semanal", value: "weekly" },
+            { label: "Una vez al mes", value: "monthly" },
+          ]}
+        />
+        {form.recurrenceType === "weekly" ? (
+          <div>
+            <p className="text-sm font-semibold text-slate-700">Días de visita</p>
+            <div className="mt-2 grid grid-cols-4 gap-2">
+              {weekDays.map((day) => {
+                const active = form.weeklyDays.includes(day.value);
+                return (
+                  <button
+                    key={day.value}
+                    type="button"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        weeklyDays: active
+                          ? current.weeklyDays.filter((value) => value !== day.value)
+                          : [...current.weeklyDays, day.value].sort((a, b) => a - b),
+                      }))
+                    }
+                    className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                      active
+                        ? "border-violet-600 bg-violet-50 text-violet-700"
+                        : "border-slate-200 text-slate-600 hover:border-violet-200"
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        {form.recurrenceType === "monthly" ? (
+          <TextField
+            label="Día del mes"
+            type="number"
+            value={String(form.monthlyDay)}
+            onChange={(value) =>
+              setForm((current) => ({
+                ...current,
+                monthlyDay: Math.min(31, Math.max(1, Number(value) || 1)),
+              }))
+            }
+            required
+          />
+        ) : null}
+        {form.recurrenceType !== "once" ? (
+          <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm text-violet-800">
+            <p className="font-bold">{formatVisitRecurrence(form)}</p>
+            <p className="mt-1">
+              Se van a crear {plannedDates.length} visitas futuras desde{" "}
+              {formatSelectedDate(plannedDates[0] ?? form.date)}.
+            </p>
+          </div>
+        ) : null}
         <TextAreaField
           label="Procedimientos"
           value={form.procedures}
@@ -1463,17 +2173,23 @@ function AddVisitForm({ onAddVisit }: { onAddVisit: (form: VisitForm) => void })
           onChange={(value) => setForm((current) => ({ ...current, notes: value }))}
           placeholder="Paciente estable..."
         />
-        <SelectField
-          label="Estado"
-          value={form.status}
-          onChange={(value) =>
-            setForm((current) => ({ ...current, status: value as VisitStatus }))
-          }
-          options={[
-            { label: "Pendiente", value: "pendiente" },
-            { label: "Realizada", value: "realizada" },
-          ]}
-        />
+        {form.recurrenceType === "once" ? (
+          <SelectField
+            label="Estado"
+            value={form.status}
+            onChange={(value) =>
+              setForm((current) => ({ ...current, status: value as VisitStatus }))
+            }
+            options={[
+              { label: "Pendiente", value: "pendiente" },
+              { label: "Realizada", value: "realizada" },
+            ]}
+          />
+        ) : (
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+            Las visitas recurrentes se agendan como pendientes.
+          </div>
+        )}
       </div>
       <button className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-700">
         <Plus size={17} />
@@ -1635,12 +2351,15 @@ function FamilySection({
                 <div>
                   <h2 className="font-bold text-slate-950">{contact.name}</h2>
                   <p className="mt-1 text-sm text-slate-500">{contact.role}</p>
+                  {contact.email ? (
+                    <p className="mt-1 text-xs font-semibold text-blue-700">{contact.email}</p>
+                  ) : null}
                 </div>
               </div>
               <div className="mt-5 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
                 <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                   <Users size={17} />
-                  Contacto
+                  {formatAccessLevel(contact.accessLevel)}
                 </span>
                 <span
                   className={`text-sm font-bold ${
@@ -1650,6 +2369,16 @@ function FamilySection({
                   {contact.status}
                 </span>
               </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {contact.permissions.canManageMedications ? <PermissionPill label="Edita medicación" /> : null}
+                {contact.permissions.canConfirmMedications ? <PermissionPill label="Confirma tomas" /> : null}
+                {contact.permissions.canManageVisits ? <PermissionPill label="Agenda visitas" /> : null}
+                {contact.permissions.canConfirmVisits ? <PermissionPill label="Confirma visitas" /> : null}
+                {contact.permissions.canManageContacts ? <PermissionPill label="Invita personas" /> : null}
+              </div>
+              <p className="mt-3 text-xs font-bold text-slate-500">
+                Cuenta: {formatInvitationStatus(contact.invitationStatus)}
+              </p>
             </article>
           ))}
         </div>
@@ -1662,14 +2391,29 @@ function AddContactForm({ onAddContact }: { onAddContact: (form: ContactForm) =>
   const [form, setForm] = useState<ContactForm>({
     name: "",
     role: "",
+    email: "",
+    roleType: "family",
+    accessLevel: "viewer",
+    permissions: viewerPermissions,
+    inviteWithAccount: true,
     status: "Disponible",
   });
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!form.name.trim() || !form.role.trim()) return;
+    if (form.inviteWithAccount && !form.email.trim()) return;
     onAddContact(form);
-    setForm({ name: "", role: "", status: "Disponible" });
+    setForm({
+      name: "",
+      role: "",
+      email: "",
+      roleType: "family",
+      accessLevel: "viewer",
+      permissions: viewerPermissions,
+      inviteWithAccount: true,
+      status: "Disponible",
+    });
   };
 
   return (
@@ -1690,6 +2434,83 @@ function AddContactForm({ onAddContact }: { onAddContact: (form: ContactForm) =>
           placeholder="Ej. Nieta autorizada"
           required
         />
+        <TextField
+          label="Email"
+          type="email"
+          value={form.email}
+          onChange={(value) => setForm((current) => ({ ...current, email: value }))}
+          placeholder="persona@email.com"
+          required={form.inviteWithAccount}
+        />
+        <SelectField
+          label="Tipo de usuario"
+          value={form.roleType}
+          onChange={(value) =>
+            setForm((current) => ({ ...current, roleType: value as UserRole }))
+          }
+          options={[
+            { label: "Familiar", value: "family" },
+            { label: "Médico/cuidador", value: "doctor" },
+            { label: "Persona mayor", value: "senior" },
+          ]}
+        />
+        <SelectField
+          label="Nivel de acceso"
+          value={form.accessLevel}
+          onChange={(value) => {
+            const accessLevel = value as AccessLevel;
+            setForm((current) => ({
+              ...current,
+              accessLevel,
+              permissions: getPermissionsForAccessLevel(accessLevel),
+            }));
+          }}
+          options={[
+            { label: "Acceso completo", value: "full" },
+            { label: "Puede editar cuidado", value: "editor" },
+            { label: "Solo lectura", value: "viewer" },
+            { label: "Persona mayor limitada", value: "senior_limited" },
+            { label: "Personalizado", value: "custom" },
+          ]}
+        />
+        <div className="rounded-xl border border-slate-200 p-4">
+          <p className="text-sm font-bold text-slate-800">Permisos</p>
+          <div className="mt-3 grid gap-2">
+            {permissionOptions.map((permission) => (
+              <label key={permission.key} className="flex items-center gap-3 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={form.permissions[permission.key]}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      accessLevel: "custom",
+                      permissions: {
+                        ...current.permissions,
+                        [permission.key]: event.target.checked,
+                      },
+                    }))
+                  }
+                />
+                {permission.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <label className="flex gap-3 rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
+          <input
+            type="checkbox"
+            checked={form.inviteWithAccount}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                inviteWithAccount: event.target.checked,
+              }))
+            }
+            className="mt-1"
+          />
+          Enviar invitación para que esta persona tenga cuenta
+        </label>
         <SelectField
           label="Estado de contacto"
           value={form.status}
@@ -1708,6 +2529,14 @@ function AddContactForm({ onAddContact }: { onAddContact: (form: ContactForm) =>
         Agregar contacto
       </button>
     </form>
+  );
+}
+
+function PermissionPill({ label }: { label: string }) {
+  return (
+    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+      {label}
+    </span>
   );
 }
 
@@ -1849,16 +2678,27 @@ function getDailyMedications(
   intakes: MedicationIntake[],
   selectedDate: string,
 ) {
-  return medications.map((medication) => {
-    const intake = intakes.find(
-      (item) => item.medicationId === medication.id && item.scheduledDate === selectedDate,
-    );
+  return medications
+    .flatMap((medication) =>
+      getScheduledTimesForMedication(medication, selectedDate).map((time) => {
+        const intake = intakes.find(
+          (item) =>
+            item.medicationId === medication.id &&
+            item.scheduledDate === selectedDate &&
+            item.scheduledTime === time,
+        );
 
-    return {
-      ...medication,
-      status: intake?.status ?? getDefaultDailyMedicationStatus(medication, selectedDate),
-    };
-  });
+        return {
+          ...medication,
+          scheduleKey: `${medication.id}-${selectedDate}-${time}`,
+          time,
+          status:
+            intake?.status ??
+            getDefaultDailyMedicationStatus({ ...medication, time }, selectedDate),
+        };
+      }),
+    )
+    .sort((a, b) => a.time.localeCompare(b.time));
 }
 
 function getDefaultDailyMedicationStatus(
@@ -1923,6 +2763,10 @@ function getDateOffset(offset: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function getDateRange(startOffset: number, days: number) {
+  return Array.from({ length: days }, (_, index) => getDateOffset(startOffset + index));
+}
+
 function formatSelectedDate(value: string) {
   const today = getTodayIso();
   if (value === today) return "Hoy";
@@ -1932,6 +2776,26 @@ function formatSelectedDate(value: string) {
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(`${value}T00:00:00`));
+}
+
+function getDayTileDisplay(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+
+  return {
+    weekday: new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(date),
+    dayNumber: new Intl.DateTimeFormat("es-AR", { day: "2-digit" }).format(date),
+    month: new Intl.DateTimeFormat("es-AR", { month: "short" }).format(date),
+  };
+}
+
+function getDayToneLabel(tone: DaySummary["tone"]) {
+  const labels: Record<DaySummary["tone"], string> = {
+    green: "OK",
+    yellow: "Hoy",
+    red: "Revisar",
+  };
+
+  return labels[tone];
 }
 
 function getInitials(name: string) {
@@ -1972,6 +2836,163 @@ function compareVisitsBySchedule(a: Visit, b: Visit) {
 function toIsoDate(displayDate: string) {
   const [day, month, year] = displayDate.split("/");
   return `${year}-${month}-${day}`;
+}
+
+function getFrequencySelectValue(form: MedicationForm) {
+  if (form.frequencyType === "interval") return `interval-${form.intervalHours ?? 12}`;
+  return form.frequencyType;
+}
+
+function getReminderTimesForMedication(medication: Medication) {
+  const todayTimes = getScheduledTimesForMedication(medication, getTodayIso());
+  return todayTimes.length > 0 ? todayTimes : [medication.time];
+}
+
+function formatMedicationFrequency(medication: Medication) {
+  if (medication.frequencyType === "weekly") {
+    const days = weekDays
+      .filter((day) => medication.weeklyDays.includes(day.value))
+      .map((day) => day.label)
+      .join(", ");
+    return days ? `Semanal: ${days}` : "Semanal";
+  }
+
+  if (medication.frequencyType === "interval" && medication.intervalHours) {
+    return `Cada ${medication.intervalHours} horas`;
+  }
+
+  return "Diario";
+}
+
+function getVisitSeriesDates(
+  visit: Pick<VisitForm, "date" | "recurrenceType" | "weeklyDays" | "monthlyDay">,
+) {
+  if (visit.recurrenceType === "once") return [visit.date];
+
+  const start = parseIsoLocalDate(visit.date);
+
+  if (visit.recurrenceType === "daily") {
+    return Array.from({ length: 14 }, (_, index) => formatLocalIsoDate(addDays(start, index)));
+  }
+
+  if (visit.recurrenceType === "weekly") {
+    const selectedDays = visit.weeklyDays.length > 0 ? visit.weeklyDays : [start.getDay()];
+    const dates: string[] = [];
+
+    for (let offset = 0; dates.length < 12 && offset < 84; offset += 1) {
+      const date = addDays(start, offset);
+      if (selectedDays.includes(date.getDay())) {
+        dates.push(formatLocalIsoDate(date));
+      }
+    }
+
+    return dates;
+  }
+
+  const dates: string[] = [];
+  const targetDay = Math.min(31, Math.max(1, visit.monthlyDay || start.getDate()));
+
+  for (let monthOffset = 0; dates.length < 6 && monthOffset < 8; monthOffset += 1) {
+    const year = start.getFullYear();
+    const month = start.getMonth() + monthOffset;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const date = new Date(year, month, Math.min(targetDay, lastDay));
+
+    if (date >= start) {
+      dates.push(formatLocalIsoDate(date));
+    }
+  }
+
+  return dates;
+}
+
+function formatVisitRecurrence(
+  visit: {
+    recurrenceType: VisitRecurrence;
+    weeklyDays: number[];
+    monthlyDay?: number | null;
+  },
+) {
+  if (visit.recurrenceType === "daily") return "Diaria";
+  if (visit.recurrenceType === "monthly") return `Mensual: día ${visit.monthlyDay}`;
+  if (visit.recurrenceType === "weekly") {
+    const days = weekDays
+      .filter((day) => visit.weeklyDays.includes(day.value))
+      .map((day) => day.label)
+      .join(", ");
+    return days ? `Semanal: ${days}` : "Semanal";
+  }
+
+  return "Una sola vez";
+}
+
+function getPermissionsForAccessLevel(accessLevel: AccessLevel): UserPermissions {
+  if (accessLevel === "full") return fullPermissions;
+  if (accessLevel === "editor") {
+    return {
+      ...fullPermissions,
+      canManagePatient: false,
+      canManageContacts: false,
+    };
+  }
+  if (accessLevel === "senior_limited") return seniorLimitedPermissions;
+  return viewerPermissions;
+}
+
+function formatAccessLevel(accessLevel: AccessLevel) {
+  const labels: Record<AccessLevel, string> = {
+    full: "Acceso completo",
+    editor: "Editor de cuidado",
+    viewer: "Solo lectura",
+    senior_limited: "Persona mayor",
+    custom: "Personalizado",
+  };
+
+  return labels[accessLevel];
+}
+
+function formatInvitationStatus(status: CareContact["invitationStatus"]) {
+  const labels: Record<CareContact["invitationStatus"], string> = {
+    "sin cuenta": "sin cuenta",
+    pendiente: "invitación pendiente",
+    aceptada: "aceptada",
+    rechazada: "rechazada",
+  };
+
+  return labels[status];
+}
+
+function parseIsoLocalDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatLocalIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date: Date, days: number) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function getWeekdayFromIso(value: string) {
+  return parseIsoLocalDate(value).getDay();
+}
+
+function getDayOfMonthFromIso(value: string) {
+  return parseIsoLocalDate(value).getDate();
+}
+
+function createClientUuid() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    "00000000-0000-4000-8000-000000000000"
+  );
 }
 
 function getShortTimestamp() {

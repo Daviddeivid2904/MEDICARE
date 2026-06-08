@@ -18,6 +18,26 @@ import type {
   Visit,
 } from "@/types";
 
+const fullPermissions = {
+  canManagePatient: true,
+  canManageMedications: true,
+  canConfirmMedications: true,
+  canManageVisits: true,
+  canConfirmVisits: true,
+  canManageContacts: true,
+  canViewHistory: true,
+};
+
+const viewerPermissions = {
+  canManagePatient: false,
+  canManageMedications: false,
+  canConfirmMedications: false,
+  canManageVisits: false,
+  canConfirmVisits: false,
+  canManageContacts: false,
+  canViewHistory: true,
+};
+
 export const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: Home },
   { id: "medicacion", label: "Medicación", icon: Pill },
@@ -51,10 +71,10 @@ export const benefits = [
 ];
 
 export const initialMedications: Medication[] = [
-  { id: "mock-med-1", name: "Losartán", dose: "50 mg", time: "08:00", status: "tomado" },
-  { id: "mock-med-2", name: "Metformina", dose: "850 mg", time: "12:30", status: "pendiente" },
-  { id: "mock-med-3", name: "Atorvastatina", dose: "20 mg", time: "20:00", status: "pendiente" },
-  { id: "mock-med-4", name: "Vitamina D", dose: "1 cápsula", time: "09:00", status: "atrasado" },
+  { id: "mock-med-1", name: "Losartán", dose: "50 mg", purpose: "Control de presión arterial.", time: "08:00", status: "tomado", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: false, reminderEmail: "" },
+  { id: "mock-med-2", name: "Metformina", dose: "850 mg", purpose: "Control de glucemia.", time: "12:30", status: "pendiente", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: true, reminderEmail: "familiar@medicare.demo" },
+  { id: "mock-med-3", name: "Atorvastatina", dose: "20 mg", purpose: "Control de colesterol.", time: "20:00", status: "pendiente", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: false, reminderEmail: "" },
+  { id: "mock-med-4", name: "Vitamina D", dose: "1 cápsula", purpose: "Suplemento indicado.", time: "09:00", status: "atrasado", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: false, reminderEmail: "" },
 ];
 
 export const initialPatient: Patient = {
@@ -80,6 +100,9 @@ export const initialVisits: Visit[] = [
     procedures: "Control de presión, glucemia y revisión de medicación.",
     notes: "Paciente estable. Reforzar hidratación y caminata suave.",
     status: "realizada",
+    recurrenceType: "once",
+    weeklyDays: [],
+    monthlyDay: null,
   },
   {
     id: "mock-visit-2",
@@ -90,6 +113,10 @@ export const initialVisits: Visit[] = [
     procedures: "Movilidad articular y ejercicios de equilibrio.",
     notes: "Visita programada para seguimiento semanal.",
     status: "pendiente",
+    recurrenceType: "weekly",
+    recurrenceGroupId: "mock-weekly-kinesio",
+    weeklyDays: [3],
+    monthlyDay: null,
   },
   {
     id: "mock-visit-3",
@@ -100,6 +127,9 @@ export const initialVisits: Visit[] = [
     procedures: "Curación menor y control de signos vitales.",
     notes: "Sin signos de alarma. Familia notificada.",
     status: "realizada",
+    recurrenceType: "once",
+    weeklyDays: [],
+    monthlyDay: null,
   },
 ];
 
@@ -128,10 +158,10 @@ export const initialAlerts: CareAlert[] = [
 ];
 
 export const contacts: CareContact[] = [
-  { id: "mock-contact-1", name: "Ana Gómez", role: "Hija responsable", status: "En línea", initials: "AG" },
-  { id: "mock-contact-2", name: "Carlos Gómez", role: "Familiar autorizado", status: "Disponible", initials: "CG" },
-  { id: "mock-contact-3", name: "Dra. Lucía Pérez", role: "Médica asignada", status: "Disponible", initials: "LP" },
-  { id: "mock-contact-4", name: "Camila Ríos", role: "Cuidadora domiciliaria", status: "Fuera de horario", initials: "CR" },
+  { id: "mock-contact-1", name: "Ana Gómez", role: "Hija responsable", email: "familiar@medicare.demo", accessLevel: "full", permissions: fullPermissions, invitationStatus: "aceptada", status: "En línea", initials: "AG" },
+  { id: "mock-contact-2", name: "Carlos Gómez", role: "Familiar autorizado", email: "carlos@medicare.demo", accessLevel: "viewer", permissions: viewerPermissions, invitationStatus: "pendiente", status: "Disponible", initials: "CG" },
+  { id: "mock-contact-3", name: "Dra. Lucía Pérez", role: "Médica asignada", email: "medico@medicare.demo", accessLevel: "full", permissions: fullPermissions, invitationStatus: "aceptada", status: "Disponible", initials: "LP" },
+  { id: "mock-contact-4", name: "Camila Ríos", role: "Cuidadora domiciliaria", email: "camila@medicare.demo", accessLevel: "editor", permissions: { ...fullPermissions, canManagePatient: false, canManageContacts: false }, invitationStatus: "sin cuenta", status: "Fuera de horario", initials: "CR" },
 ];
 
 export const evolutionMetrics: EvolutionMetric[] = [

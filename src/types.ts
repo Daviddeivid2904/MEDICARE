@@ -9,9 +9,22 @@ export type SectionId =
   | "historial";
 
 export type MedicationStatus = "tomado" | "pendiente" | "atrasado";
+export type MedicationFrequency = "daily" | "weekly" | "interval";
 export type VisitStatus = "realizada" | "pendiente";
+export type VisitRecurrence = "once" | "daily" | "weekly" | "monthly";
 export type AlertPriority = "baja" | "media" | "alta";
 export type UserRole = "family" | "doctor" | "senior";
+export type AccessLevel = "full" | "editor" | "viewer" | "senior_limited" | "custom";
+
+export type UserPermissions = {
+  canManagePatient: boolean;
+  canManageMedications: boolean;
+  canConfirmMedications: boolean;
+  canManageVisits: boolean;
+  canConfirmVisits: boolean;
+  canManageContacts: boolean;
+  canViewHistory: boolean;
+};
 
 export type NavItem = {
   id: SectionId;
@@ -22,10 +35,17 @@ export type NavItem = {
 export type Medication = {
   id: string;
   patientId?: string;
+  scheduleKey?: string;
   name: string;
   dose: string;
+  purpose: string;
   time: string;
   status: MedicationStatus;
+  frequencyType: MedicationFrequency;
+  intervalHours?: number | null;
+  weeklyDays: number[];
+  reminderEnabled: boolean;
+  reminderEmail: string;
 };
 
 export type Visit = {
@@ -39,6 +59,10 @@ export type Visit = {
   procedures: string;
   notes: string;
   status: VisitStatus;
+  recurrenceType: VisitRecurrence;
+  recurrenceGroupId?: string | null;
+  weeklyDays: number[];
+  monthlyDay?: number | null;
 };
 
 export type CareAlert = {
@@ -55,6 +79,10 @@ export type CareContact = {
   patientId?: string;
   name: string;
   role: string;
+  email: string;
+  accessLevel: AccessLevel;
+  permissions: UserPermissions;
+  invitationStatus: "sin cuenta" | "pendiente" | "aceptada" | "rechazada";
   status: "En línea" | "Disponible" | "Fuera de horario";
   initials: string;
 };
@@ -81,6 +109,9 @@ export type SessionUser = {
   role: string;
   roleType: UserRole;
   initials: string;
+  accessLevel: AccessLevel;
+  permissions: UserPermissions;
+  isDemo?: boolean;
 };
 
 export type MedicationReminder = {
@@ -98,6 +129,7 @@ export type MedicationIntake = {
   patientId: string;
   medicationId: string;
   scheduledDate: string;
+  scheduledTime: string;
   status: MedicationStatus;
   takenAt?: string | null;
   notes: string;
@@ -114,4 +146,19 @@ export type EvolutionMetric = {
   value: string;
   trend: string;
   percent: number;
+};
+
+export type CareInvitation = {
+  id: string;
+  patientId: string;
+  contactId?: string | null;
+  inviteeEmail: string;
+  inviteeName: string;
+  roleLabel: string;
+  roleType: UserRole;
+  accessLevel: AccessLevel;
+  permissions: UserPermissions;
+  status: "pending" | "accepted" | "declined";
+  token: string;
+  createdAt: string;
 };
