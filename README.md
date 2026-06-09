@@ -101,8 +101,15 @@ npm run start
 1. Subir este repositorio a GitHub.
 2. Entrar a Vercel y crear un nuevo proyecto desde el repositorio.
 3. Vercel detecta Next.js automáticamente.
-4. Usar los defaults:
+4. En `Settings` → `Environment Variables`, agregar:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://gjncbofcmalgmrqtdpaj.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_XPidDjre2nYrcWdjjB3tqQ_1yMd_ks1
+```
+
+5. Usar los defaults:
    - Build Command: `npm run build`
    - Install Command: `npm install`
    - Output Directory: `.next`
-5. Deploy.
+6. Deploy. Si ya estaba deployado, ejecutar `Redeploy` después de guardar las variables.

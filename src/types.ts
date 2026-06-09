@@ -148,6 +148,56 @@ export type EvolutionMetric = {
   percent: number;
 };
 
+export type EnterpriseDoctor = {
+  id: string;
+  name: string;
+  email: string;
+  specialty: string;
+  status: "En visita" | "Disponible" | "Atrasado";
+  patientsToday: number;
+  completedVisits: number;
+  pendingVisits: number;
+  lastCheckIn: string;
+};
+
+export type EnterpriseMedication = {
+  name: string;
+  time: string;
+  status: MedicationStatus;
+};
+
+export type EnterpriseVisit = {
+  professional: string;
+  type: string;
+  time: string;
+  status: VisitStatus;
+};
+
+export type EnterprisePatientHistory = {
+  id: string;
+  date: string;
+  title: string;
+  detail: string;
+  type: "medicacion" | "visita" | "alerta" | "nota";
+};
+
+export type EnterprisePatient = {
+  id: string;
+  name: string;
+  age: number;
+  coverage: string;
+  location: string;
+  status: string;
+  assignedDoctors: string[];
+  medicationAdherence: number;
+  completedVisits: number;
+  pendingVisits: number;
+  medications: EnterpriseMedication[];
+  visits: EnterpriseVisit[];
+  alerts: string[];
+  history: EnterprisePatientHistory[];
+};
+
 export type CareInvitation = {
   id: string;
   patientId: string;

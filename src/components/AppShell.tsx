@@ -94,7 +94,7 @@ export function AppShell({
       ) : null}
 
       <main className="min-w-0">
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-5 py-4 backdrop-blur lg:px-8">
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/90 px-3 py-3 backdrop-blur sm:px-5 sm:py-4 lg:px-8">
           <button
             aria-label="Abrir menú"
             onClick={() => setOpen(true)}
@@ -102,7 +102,7 @@ export function AppShell({
           >
             <Menu size={22} />
           </button>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
             <span className="hidden text-sm font-medium text-slate-500 sm:inline">
               {user.name} · {user.role}
             </span>
@@ -118,7 +118,7 @@ export function AppShell({
             </button>
           </div>
         </header>
-        <div className="px-5 py-6 lg:px-8 lg:py-8">{children}</div>
+        <div className="px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">{children}</div>
       </main>
     </div>
   );
