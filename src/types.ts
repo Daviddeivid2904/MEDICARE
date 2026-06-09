@@ -181,6 +181,16 @@ export type EnterprisePatientHistory = {
   type: "medicacion" | "visita" | "alerta" | "nota";
 };
 
+export type PatientFamilyAccess = {
+  id: string;
+  name: string;
+  email: string;
+  relationship: string;
+  accessLevel: AccessLevel;
+  permissions: UserPermissions;
+  invitationStatus: "pendiente" | "aceptada" | "rechazada";
+};
+
 export type EnterprisePatient = {
   id: string;
   name: string;
@@ -196,6 +206,24 @@ export type EnterprisePatient = {
   visits: EnterpriseVisit[];
   alerts: string[];
   history: EnterprisePatientHistory[];
+  familyAccesses: PatientFamilyAccess[];
+};
+
+export type ProfessionalPatient = {
+  id: string;
+  name: string;
+  age: number;
+  diagnosis: string;
+  location: string;
+  emergencyContact: string;
+  generalStatus: string;
+  allergies: string;
+  carePlan: string;
+  clinicalNotes: string;
+  medications: Medication[];
+  visits: Visit[];
+  history: EnterprisePatientHistory[];
+  familyAccesses: PatientFamilyAccess[];
 };
 
 export type CareInvitation = {

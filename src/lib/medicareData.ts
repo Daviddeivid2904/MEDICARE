@@ -6,12 +6,15 @@ import type {
   CareAlert,
   CareContact,
   CareInvitation,
+  EnterprisePatientHistory,
   Medication,
   MedicationFrequency,
   MedicationIntake,
   MedicationReminder,
   MedicationStatus,
   Patient,
+  PatientFamilyAccess,
+  ProfessionalPatient,
   SessionUser,
   UserPermissions,
   UserRole,
@@ -29,6 +32,54 @@ export type MedicareData = {
   activityLog: ActivityLog[];
   reminders: MedicationReminder[];
   intakes: MedicationIntake[];
+};
+
+export type ProfessionalWorkspaceData = {
+  professionalName: string;
+  professionalRole: string;
+  patients: ProfessionalPatient[];
+};
+
+export type ProfessionalPatientInput = {
+  name: string;
+  age: number;
+  diagnosis: string;
+  location: string;
+  emergencyContact: string;
+};
+
+export type ProfessionalMedicationInput = {
+  name: string;
+  dose: string;
+  purpose: string;
+  time: string;
+  frequencyType: MedicationFrequency;
+  intervalHours?: number | null;
+  weeklyDays: number[];
+  reminderEnabled: boolean;
+  reminderEmail: string;
+};
+
+export type ProfessionalVisitInput = {
+  professional: string;
+  role: string;
+  date: string;
+  time: string;
+  procedures: string;
+  notes: string;
+  status: VisitStatus;
+  recurrenceType: VisitRecurrence;
+  recurrenceGroupId?: string | null;
+  weeklyDays: number[];
+  monthlyDay?: number | null;
+};
+
+export type ProfessionalFamilyAccessInput = {
+  name: string;
+  email: string;
+  relationship: string;
+  accessLevel: AccessLevel;
+  permissions: UserPermissions;
 };
 
 export type SignupForm = {
@@ -763,6 +814,373 @@ export async function createReminderEmail(patientId: string, reminder: Medicatio
   return data;
 }
 
+export async function loadProfessionalWorkspaceData(): Promise<ProfessionalWorkspaceData | null> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user?.id) return null;
+
+  await ensureProfile(user.id, user.email ?? "");
+
+  const [profileResult, membershipsResult, assignmentsResult] = await Promise.all([
+    supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
+    supabase.from("patient_memberships").select("patient_id").eq("user_id", user.id),
+    supabase
+      .from("patient_professional_assignments")
+      .select("patient_id")
+      .eq("professional_user_id", user.id)
+      .eq("active", true),
+  ]);
+
+  const firstError = profileResult.error ?? membershipsResult.error ?? assignmentsResult.error;
+  if (firstError) throw firstError;
+
+  const patientIds = Array.from(
+    new Set([
+      ...(membershipsResult.data ?? []).map((row) => row.patient_id),
+      ...(assignmentsResult.data ?? []).map((row) => row.patient_id),
+    ]),
+  ).filter(Boolean);
+
+  const patients = await Promise.all(patientIds.map(loadProfessionalPatient));
+  const profile = profileResult.data;
+  const professionalName =
+    profile?.full_name ?? user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "Profesional";
+
+  return {
+    professionalName,
+    professionalRole: profile?.role === "doctor" ? "Profesional de salud" : "Equipo de cuidado",
+    patients,
+  };
+}
+
+export async function createProfessionalPatient(
+  form: ProfessionalPatientInput,
+): Promise<ProfessionalPatient> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) throw userError;
+  if (!user?.id) throw new Error("Tenés que iniciar sesión para crear pacientes.");
+
+  await ensureProfile(user.id, user.email ?? "");
+
+  const patientId = createClientUuid();
+  const { error: patientError } = await supabase.from("patients").insert({
+    id: patientId,
+    name: form.name,
+    age: form.age,
+    diagnosis: form.diagnosis,
+    emergency_contact: form.emergencyContact,
+    doctor: "",
+    general_status: "Nuevo paciente",
+    allergies: "Sin datos cargados",
+    mobility_risk: form.location,
+    care_plan: "Plan de cuidado pendiente de definir.",
+    clinical_notes: "Paciente creado desde el panel profesional.",
+  });
+
+  if (patientError) throw patientError;
+
+  const { error: membershipError } = await supabase.from("patient_memberships").insert({
+    patient_id: patientId,
+    user_id: user.id,
+    role: "doctor",
+    access_level: "full",
+    ...toDbPermissions(fullPermissions),
+  });
+
+  if (membershipError) throw membershipError;
+
+  const [contextResult, assignmentResult] = await Promise.all([
+    supabase.from("patient_care_contexts").insert({
+      patient_id: patientId,
+      owner_user_id: user.id,
+      context_type: "independent_professional",
+      name: "Plan profesional independiente",
+    }),
+    supabase.from("patient_professional_assignments").insert({
+      patient_id: patientId,
+      professional_user_id: user.id,
+      specialty: "",
+      active: true,
+    }),
+  ]);
+
+  const firstError = contextResult.error ?? assignmentResult.error;
+  if (firstError) throw firstError;
+
+  await createProfessionalHistory(patientId, {
+    title: "Paciente agregado",
+    detail: "Se creó la ficha inicial del paciente.",
+    eventType: "nota",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function updateProfessionalPatientProfile(
+  patientId: string,
+  updates: Pick<ProfessionalPatient, "generalStatus" | "allergies" | "carePlan" | "clinicalNotes">,
+) {
+  const { error } = await supabase
+    .from("patients")
+    .update({
+      general_status: updates.generalStatus,
+      allergies: updates.allergies,
+      care_plan: updates.carePlan,
+      clinical_notes: updates.clinicalNotes,
+    })
+    .eq("id", patientId);
+
+  if (error) throw error;
+
+  await createProfessionalHistory(patientId, {
+    title: "Ficha actualizada",
+    detail: "Se modificó la información clínica del paciente.",
+    eventType: "nota",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function createProfessionalMedication(
+  patientId: string,
+  medication: ProfessionalMedicationInput,
+) {
+  const createdMedication = await createMedication(patientId, medication);
+  await createMedicationIntakes(patientId, createdMedication, getDateRange(0, 14));
+
+  if (medication.reminderEnabled && medication.reminderEmail.trim()) {
+    await Promise.all(
+      getScheduledTimesForMedication(createdMedication, getDateOffset(0)).map(async (scheduledTime) => {
+        const reminder = await createReminder(patientId, {
+          medicationId: createdMedication.id,
+          recipientEmail: medication.reminderEmail.trim(),
+          scheduledTime,
+        });
+        await createReminderEmail(patientId, reminder);
+      }),
+    );
+  }
+
+  await createProfessionalHistory(patientId, {
+    title: "Medicación agregada",
+    detail: `${createdMedication.name} ${createdMedication.dose} a las ${createdMedication.time}.`,
+    eventType: "medicacion",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function updateMedicationPlanStatus(
+  patientId: string,
+  medicationId: string,
+  scheduledTime: string,
+  status: MedicationStatus,
+) {
+  const { data, error } = await supabase
+    .from("medications")
+    .update({ status })
+    .eq("id", medicationId)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  await upsertMedicationIntake({
+    patientId,
+    medicationId,
+    scheduledDate: getDateOffset(0),
+    scheduledTime,
+    status,
+  });
+
+  await createProfessionalHistory(patientId, {
+    title: status === "tomado" ? "Toma confirmada" : "Toma no confirmada",
+    detail: `${data.name} de las ${scheduledTime} quedó como ${status}.`,
+    eventType: "medicacion",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function deleteMedicationPlan(patientId: string, medicationId: string) {
+  const { data: medication } = await supabase
+    .from("medications")
+    .select("name")
+    .eq("id", medicationId)
+    .maybeSingle();
+
+  const { error } = await supabase.from("medications").delete().eq("id", medicationId);
+  if (error) throw error;
+
+  await createProfessionalHistory(patientId, {
+    title: "Medicación retirada",
+    detail: medication?.name ? `${medication.name} fue quitada del plan.` : "Se quitó una medicación.",
+    eventType: "medicacion",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function createProfessionalVisits(
+  patientId: string,
+  visits: ProfessionalVisitInput[],
+) {
+  const createdVisits = await createVisitSeries(patientId, visits);
+
+  await createProfessionalHistory(patientId, {
+    title: "Visita programada",
+    detail: `${createdVisits.length} visita${createdVisits.length === 1 ? "" : "s"} agregada${createdVisits.length === 1 ? "" : "s"} a la agenda.`,
+    eventType: "visita",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function updateProfessionalVisitStatus(
+  patientId: string,
+  visitId: string,
+  status: VisitStatus,
+) {
+  const visit = await updateVisitStatus(visitId, status);
+
+  await createProfessionalHistory(patientId, {
+    title: `Visita ${status}`,
+    detail: `${visit.procedures} de las ${visit.time} quedó como ${status}.`,
+    eventType: "visita",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function deleteProfessionalVisit(patientId: string, visitId: string) {
+  const { data: visit } = await supabase
+    .from("visits")
+    .select("visit_date, visit_time, procedures")
+    .eq("id", visitId)
+    .maybeSingle();
+
+  const { error } = await supabase.from("visits").delete().eq("id", visitId);
+  if (error) throw error;
+
+  await createProfessionalHistory(patientId, {
+    title: "Visita eliminada",
+    detail: visit
+      ? `${formatDateForDisplay(visit.visit_date)} ${normalizeTime(visit.visit_time)} fue quitada de agenda.`
+      : "Se quitó una visita.",
+    eventType: "visita",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function createProfessionalObservation(patientId: string, observation: string) {
+  const { error } = await supabase
+    .from("patients")
+    .update({ clinical_notes: observation })
+    .eq("id", patientId);
+
+  if (error) throw error;
+
+  await createProfessionalHistory(patientId, {
+    title: "Observación clínica",
+    detail: observation,
+    eventType: "nota",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+export async function createProfessionalFamilyAccess(
+  patientId: string,
+  access: ProfessionalFamilyAccessInput,
+) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { error } = await supabase.from("patient_family_accesses").insert({
+    patient_id: patientId,
+    invited_by_user_id: user?.id,
+    invitee_email: access.email,
+    invitee_name: access.name,
+    relationship: access.relationship,
+    access_level: access.accessLevel,
+    invitation_status: "pending",
+    ...toDbPermissions(access.permissions),
+  });
+
+  if (error) throw error;
+
+  const invitation = await createCareInvitation(patientId, {
+    inviteeEmail: access.email,
+    inviteeName: access.name,
+    roleLabel: access.relationship || "Familiar",
+    roleType: "family",
+    accessLevel: access.accessLevel,
+    permissions: access.permissions,
+  });
+  await createInvitationEmail(patientId, invitation);
+
+  await createProfessionalHistory(patientId, {
+    title: "Familiar invitado",
+    detail: `${access.name} recibirá acceso ${access.accessLevel} al dashboard.`,
+    eventType: "nota",
+  });
+
+  return loadProfessionalPatient(patientId);
+}
+
+async function loadProfessionalPatient(patientId: string): Promise<ProfessionalPatient> {
+  const [baseData, historyResult, familyAccessesResult] = await Promise.all([
+    loadMedicareData(patientId),
+    supabase
+      .from("patient_clinical_history")
+      .select("*")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("patient_family_accesses")
+      .select("*")
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const firstError = historyResult.error ?? familyAccessesResult.error;
+  if (firstError) throw firstError;
+
+  return mapProfessionalPatient(
+    baseData,
+    (historyResult.data ?? []).map(mapClinicalHistory),
+    (familyAccessesResult.data ?? []).map(mapFamilyAccess),
+  );
+}
+
+async function createProfessionalHistory(
+  patientId: string,
+  event: { title: string; detail: string; eventType: EnterprisePatientHistory["type"] },
+) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { error } = await supabase.from("patient_clinical_history").insert({
+    patient_id: patientId,
+    created_by_user_id: user?.id,
+    event_type: event.eventType,
+    title: event.title,
+    detail: event.detail,
+  });
+
+  if (error) throw error;
+}
+
 export function mapDemoUser(row: DemoUserRow): SessionUser {
   const permissions =
     row.role === "senior"
@@ -1011,10 +1429,107 @@ function mapIntake(row: any): MedicationIntake {
   };
 }
 
+function mapProfessionalPatient(
+  data: MedicareData,
+  clinicalHistory: EnterprisePatientHistory[],
+  familyAccesses: PatientFamilyAccess[],
+): ProfessionalPatient {
+  const contactAccesses = data.contacts
+    .filter((contact) => contact.email || contact.role.toLowerCase().includes("familiar"))
+    .map(mapContactToFamilyAccess);
+  const mergedFamilyAccesses = mergeFamilyAccesses([...familyAccesses, ...contactAccesses]);
+  const activityHistory: EnterprisePatientHistory[] = data.activityLog.map((log) => ({
+    id: log.id,
+    date: formatShortDateTime(log.createdAt),
+    title: "Actividad",
+    detail: log.message,
+    type: "nota",
+  }));
+
+  return {
+    id: data.patient.id ?? "",
+    name: data.patient.name,
+    age: data.patient.age,
+    diagnosis: data.patient.diagnosis,
+    location: data.patient.mobilityRisk || "Domicilio sin cargar",
+    emergencyContact: data.patient.emergencyContact,
+    generalStatus: data.patient.generalStatus,
+    allergies: data.patient.allergies,
+    carePlan: data.patient.carePlan,
+    clinicalNotes: data.patient.clinicalNotes,
+    medications: data.medications,
+    visits: data.visits,
+    history: [...clinicalHistory, ...activityHistory],
+    familyAccesses: mergedFamilyAccesses,
+  };
+}
+
+function mapClinicalHistory(row: any): EnterprisePatientHistory {
+  return {
+    id: row.id,
+    date: formatShortDateTime(row.created_at),
+    title: row.title,
+    detail: row.detail,
+    type: normalizeHistoryType(row.event_type),
+  };
+}
+
+function mapFamilyAccess(row: any): PatientFamilyAccess {
+  return {
+    id: row.id,
+    name: row.invitee_name || row.invitee_email || "Familiar invitado",
+    email: row.invitee_email ?? "",
+    relationship: row.relationship || "Familiar",
+    accessLevel: row.access_level ?? "viewer",
+    permissions: mapPermissions(row),
+    invitationStatus: mapFamilyInvitationStatus(row.invitation_status),
+  };
+}
+
+function mapContactToFamilyAccess(contact: CareContact): PatientFamilyAccess {
+  return {
+    id: `contact-${contact.id}`,
+    name: contact.name,
+    email: contact.email,
+    relationship: contact.role,
+    accessLevel: contact.accessLevel,
+    permissions: contact.permissions,
+    invitationStatus:
+      contact.invitationStatus === "aceptada" || contact.invitationStatus === "rechazada"
+        ? contact.invitationStatus
+        : "pendiente",
+  };
+}
+
+function mergeFamilyAccesses(accesses: PatientFamilyAccess[]) {
+  const seen = new Set<string>();
+  return accesses.filter((access) => {
+    const key = access.email.trim().toLowerCase() || `${access.name}-${access.relationship}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeHistoryType(value: string): EnterprisePatientHistory["type"] {
+  if (value === "medicacion" || value === "visita" || value === "alerta") return value;
+  return "nota";
+}
+
+function mapFamilyInvitationStatus(value: string): PatientFamilyAccess["invitationStatus"] {
+  if (value === "accepted" || value === "aceptada") return "aceptada";
+  if (value === "declined" || value === "rechazada") return "rechazada";
+  return "pendiente";
+}
+
 function getDateOffset(offset: number) {
   const date = new Date();
   date.setDate(date.getDate() + offset);
   return date.toISOString().slice(0, 10);
+}
+
+function getDateRange(startOffset: number, days: number) {
+  return Array.from({ length: days }, (_, index) => getDateOffset(startOffset + index));
 }
 
 export function getScheduledTimesForMedication(medication: Medication, date: string) {
@@ -1048,6 +1563,15 @@ function formatDateForDisplay(value: string) {
   if (!value) return "";
   const [year, month, day] = value.split("-");
   return `${day}/${month}/${year}`;
+}
+
+function formatShortDateTime(value: string) {
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function getRoleLabel(roleType: UserRole) {

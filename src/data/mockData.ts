@@ -17,6 +17,7 @@ import type {
   Medication,
   NavItem,
   Patient,
+  ProfessionalPatient,
   Visit,
 } from "@/types";
 
@@ -253,6 +254,10 @@ export const enterprisePatients: EnterprisePatient[] = [
       { id: "hist-rosa-2", date: "Hoy 10:30", title: "Control clínico realizado", detail: "Presión y glucemia dentro de parámetros esperados.", type: "visita" },
       { id: "hist-rosa-3", date: "Ayer 20:00", title: "Atorvastatina confirmada", detail: "Toma nocturna registrada por familiar.", type: "medicacion" },
     ],
+    familyAccesses: [
+      { id: "fam-rosa-1", name: "Ana Gómez", email: "ana.gomez@familia.demo", relationship: "Hija", accessLevel: "viewer", permissions: viewerPermissions, invitationStatus: "aceptada" },
+      { id: "fam-rosa-2", name: "Carlos Gómez", email: "carlos.gomez@familia.demo", relationship: "Hijo", accessLevel: "editor", permissions: { ...viewerPermissions, canConfirmMedications: true, canConfirmVisits: true }, invitationStatus: "pendiente" },
+    ],
   },
   {
     id: "enterprise-patient-2",
@@ -276,6 +281,9 @@ export const enterprisePatients: EnterprisePatient[] = [
     history: [
       { id: "hist-alberto-1", date: "Hoy 14:00", title: "Furosemida tomada", detail: "Confirmada por cuidador domiciliario.", type: "medicacion" },
       { id: "hist-alberto-2", date: "Hoy 11:15", title: "Visita cardiológica", detail: "Sin signos de alarma. Se mantiene plan actual.", type: "visita" },
+    ],
+    familyAccesses: [
+      { id: "fam-alberto-1", name: "Mariana Suárez", email: "mariana.suarez@familia.demo", relationship: "Nieta", accessLevel: "viewer", permissions: viewerPermissions, invitationStatus: "aceptada" },
     ],
   },
   {
@@ -303,6 +311,9 @@ export const enterprisePatients: EnterprisePatient[] = [
       { id: "hist-marta-1", date: "Hoy 13:00", title: "Enalapril atrasado", detail: "Requiere seguimiento del equipo de enfermería.", type: "alerta" },
       { id: "hist-marta-2", date: "Ayer 18:10", title: "Evaluación clínica", detail: "Se indicó reforzar hidratación y control de presión.", type: "visita" },
     ],
+    familyAccesses: [
+      { id: "fam-marta-1", name: "Laura Quiroga", email: "laura.quiroga@familia.demo", relationship: "Hija", accessLevel: "editor", permissions: { ...viewerPermissions, canConfirmMedications: true, canConfirmVisits: true }, invitationStatus: "aceptada" },
+    ],
   },
   {
     id: "enterprise-patient-4",
@@ -327,6 +338,67 @@ export const enterprisePatients: EnterprisePatient[] = [
     history: [
       { id: "hist-elena-1", date: "Hoy 13:30", title: "Enfermería realizada", detail: "Control general sin novedades.", type: "visita" },
       { id: "hist-elena-2", date: "Hoy 09:00", title: "Medicación completa", detail: "Todas las tomas de la mañana fueron confirmadas.", type: "medicacion" },
+    ],
+    familyAccesses: [
+      { id: "fam-elena-1", name: "Sofía Bianchi", email: "sofia.bianchi@familia.demo", relationship: "Sobrina", accessLevel: "viewer", permissions: viewerPermissions, invitationStatus: "pendiente" },
+    ],
+  },
+];
+
+export const professionalPatients: ProfessionalPatient[] = [
+  {
+    id: "professional-patient-1",
+    name: "Rosa Martínez",
+    age: 78,
+    diagnosis: "Hipertensión y diabetes tipo 2",
+    location: "Domicilio - Palermo",
+    emergencyContact: "Ana Gómez · +54 11 5555-0142",
+    generalStatus: "Estable",
+    allergies: "Sin alergias registradas",
+    carePlan: "Control de presión diario, medicación supervisada y caminata asistida.",
+    clinicalNotes: "Paciente orientada. Reforzar hidratación y observar adherencia de mediodía.",
+    medications: [
+      { id: "pro-med-1", name: "Losartán", dose: "50 mg", purpose: "Control de presión arterial.", time: "08:00", status: "tomado", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: true, reminderEmail: "ana@familia.demo" },
+      { id: "pro-med-2", name: "Metformina", dose: "850 mg", purpose: "Control de glucemia.", time: "12:30", status: "pendiente", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: true, reminderEmail: "ana@familia.demo" },
+      { id: "pro-med-3", name: "Atorvastatina", dose: "20 mg", purpose: "Control de colesterol.", time: "20:00", status: "pendiente", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: false, reminderEmail: "" },
+    ],
+    visits: [
+      { id: "pro-visit-1", professional: "Enf. Camila Ríos", role: "Enfermería", date: "09/06/2026", dateIso: "2026-06-09", time: "10:30", procedures: "Control de signos vitales y glucemia.", notes: "Sin signos de alarma.", status: "realizada", recurrenceType: "weekly", weeklyDays: [2], monthlyDay: null },
+      { id: "pro-visit-2", professional: "Enf. Camila Ríos", role: "Enfermería", date: "09/06/2026", dateIso: "2026-06-09", time: "18:00", procedures: "Supervisión de medicación nocturna.", notes: "Confirmar toma de Atorvastatina.", status: "pendiente", recurrenceType: "once", weeklyDays: [], monthlyDay: null },
+    ],
+    history: [
+      { id: "pro-hist-1", date: "Hoy 10:30", title: "Visita realizada", detail: "Control de signos vitales dentro de rango esperado.", type: "visita" },
+      { id: "pro-hist-2", date: "Hoy 08:00", title: "Losartán confirmado", detail: "La toma de la mañana fue registrada correctamente.", type: "medicacion" },
+    ],
+    familyAccesses: [
+      { id: "pro-fam-rosa-1", name: "Ana Gómez", email: "ana.gomez@familia.demo", relationship: "Hija", accessLevel: "viewer", permissions: viewerPermissions, invitationStatus: "aceptada" },
+      { id: "pro-fam-rosa-2", name: "Carlos Gómez", email: "carlos.gomez@familia.demo", relationship: "Hijo", accessLevel: "editor", permissions: { ...viewerPermissions, canConfirmMedications: true, canConfirmVisits: true }, invitationStatus: "pendiente" },
+    ],
+  },
+  {
+    id: "professional-patient-2",
+    name: "Marta Quiroga",
+    age: 80,
+    diagnosis: "Hipotiroidismo, hipertensión y riesgo de caídas",
+    location: "Geriátrico San Rafael - Hab. 118",
+    emergencyContact: "Laura Quiroga · +54 11 5555-0188",
+    generalStatus: "Alerta media",
+    allergies: "Penicilina",
+    carePlan: "Supervisión de medicación, control de presión y acompañamiento en traslados.",
+    clinicalNotes: "Requiere seguimiento cercano por tomas atrasadas durante la tarde.",
+    medications: [
+      { id: "pro-med-4", name: "Levotiroxina", dose: "75 mcg", purpose: "Tratamiento de hipotiroidismo.", time: "07:30", status: "tomado", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: true, reminderEmail: "laura@familia.demo" },
+      { id: "pro-med-5", name: "Enalapril", dose: "10 mg", purpose: "Control de presión arterial.", time: "13:00", status: "atrasado", frequencyType: "daily", intervalHours: 24, weeklyDays: [], reminderEnabled: true, reminderEmail: "laura@familia.demo" },
+    ],
+    visits: [
+      { id: "pro-visit-3", professional: "Enf. Camila Ríos", role: "Enfermería", date: "09/06/2026", dateIso: "2026-06-09", time: "12:00", procedures: "Control de presión y medicación.", notes: "Pendiente registrar evolución.", status: "pendiente", recurrenceType: "daily", weeklyDays: [], monthlyDay: null },
+    ],
+    history: [
+      { id: "pro-hist-3", date: "Hoy 13:00", title: "Enalapril atrasado", detail: "Se notificó a familiar responsable.", type: "alerta" },
+      { id: "pro-hist-4", date: "Ayer 18:15", title: "Observación clínica", detail: "Marcha inestable al levantarse. Se recomienda asistencia.", type: "nota" },
+    ],
+    familyAccesses: [
+      { id: "pro-fam-marta-1", name: "Laura Quiroga", email: "laura.quiroga@familia.demo", relationship: "Hija", accessLevel: "editor", permissions: { ...viewerPermissions, canConfirmMedications: true, canConfirmVisits: false }, invitationStatus: "aceptada" },
     ],
   },
 ];

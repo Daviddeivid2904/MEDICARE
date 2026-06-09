@@ -37,6 +37,7 @@ import {
   initialMedications,
   initialPatient,
   initialVisits,
+  professionalPatients,
 } from "@/data/mockData";
 import {
   createActivityLog,
@@ -48,20 +49,31 @@ import {
   createInvitationEmail,
   createMedication,
   createMedicationIntakes,
+  createProfessionalFamilyAccess,
+  createProfessionalMedication,
+  createProfessionalObservation,
+  createProfessionalPatient,
+  createProfessionalVisits,
   createReminder,
   createReminderEmail,
   createVisitSeries,
+  deleteMedicationPlan,
+  deleteProfessionalVisit,
   getCurrentSessionUser,
   getDemoUsers,
   getPendingInvitationsForCurrentUser,
   getScheduledTimesForMedication,
   loadMedicareData,
+  loadProfessionalWorkspaceData,
   signInWithEmail,
   signOut,
   signUpWithPatient,
   updateAlertResolved,
+  updateMedicationPlanStatus,
   upsertMedicationIntake,
   updatePatient as savePatient,
+  updateProfessionalPatientProfile,
+  updateProfessionalVisitStatus,
   updateVisitStatus,
 } from "@/lib/medicareData";
 import type {
@@ -79,6 +91,8 @@ import type {
   MedicationReminder,
   MedicationStatus,
   Patient,
+  PatientFamilyAccess,
+  ProfessionalPatient,
   SectionId,
   SessionUser,
   UserPermissions,
@@ -159,6 +173,82 @@ type EnterprisePatientForm = {
   assignedDoctors: string[];
 };
 
+type ProfessionalPatientForm = {
+  name: string;
+  age: string;
+  diagnosis: string;
+  location: string;
+  emergencyContact: string;
+};
+
+type ProfessionalMedicationForm = {
+  name: string;
+  dose: string;
+  purpose: string;
+  time: string;
+  frequencyType: MedicationFrequency;
+  intervalHours: number;
+  weeklyDays: number[];
+  reminderEnabled: boolean;
+  reminderEmail: string;
+};
+
+type ProfessionalVisitForm = {
+  date: string;
+  time: string;
+  procedures: string;
+  notes: string;
+  recurrenceType: VisitRecurrence;
+  weeklyDays: number[];
+  monthlyDay: number;
+};
+
+type FamilyAccessForm = {
+  name: string;
+  email: string;
+  relationship: string;
+  accessLevel: AccessLevel;
+  canConfirmMedications: boolean;
+  canConfirmVisits: boolean;
+};
+
+type ProfessionalScheduledVisit = {
+  patientId: string;
+  patientName: string;
+  patientAge: number;
+  patientStatus: string;
+  visit: Visit;
+};
+
+type ProfessionalPersistence = {
+  sourceLabel: string;
+  onAddPatient: (form: ProfessionalPatientForm) => Promise<ProfessionalPatient>;
+  onUpdatePatient: (
+    patientId: string,
+    updates: Pick<ProfessionalPatient, "generalStatus" | "allergies" | "carePlan" | "clinicalNotes">,
+  ) => Promise<ProfessionalPatient>;
+  onAddMedication: (
+    patientId: string,
+    form: ProfessionalMedicationForm,
+  ) => Promise<ProfessionalPatient>;
+  onRemoveMedication: (patientId: string, medicationId: string) => Promise<ProfessionalPatient>;
+  onMedicationStatusChange: (
+    patientId: string,
+    medicationId: string,
+    scheduledTime: string,
+    status: MedicationStatus,
+  ) => Promise<ProfessionalPatient>;
+  onAddVisit: (patientId: string, form: ProfessionalVisitForm) => Promise<ProfessionalPatient>;
+  onRemoveVisit: (patientId: string, visitId: string) => Promise<ProfessionalPatient>;
+  onVisitStatusChange: (
+    patientId: string,
+    visitId: string,
+    status: VisitStatus,
+  ) => Promise<ProfessionalPatient>;
+  onAddObservation: (patientId: string, observation: string) => Promise<ProfessionalPatient>;
+  onAddFamilyAccess: (patientId: string, form: FamilyAccessForm) => Promise<ProfessionalPatient>;
+};
+
 const defaultActivityLog: ActivityLog[] = [];
 const weekDays = [
   { label: "Dom", value: 0 },
@@ -206,7 +296,7 @@ const permissionOptions: { key: keyof UserPermissions; label: string }[] = [
   { key: "canViewHistory", label: "Ver historial y días pasados" },
 ];
 
-type MedicareAppMode = "landing" | "app" | "enterprise";
+type MedicareAppMode = "landing" | "app" | "enterprise" | "professional";
 
 type MedicareAppProps = {
   initialMode?: MedicareAppMode;
@@ -232,6 +322,7 @@ export function MedicareApp({
   const [hydrated, setHydrated] = useState(false);
   const [entered, setEntered] = useState(initialMode !== "landing");
   const [enterpriseMode, setEnterpriseMode] = useState(initialMode === "enterprise");
+  const [professionalMode, setProfessionalMode] = useState(initialMode === "professional");
   const [session, setSession] = useState<SessionUser | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection);
   const [selectedDate, setSelectedDate] = useState(getTodayIso());
@@ -251,6 +342,7 @@ export function MedicareApp({
   useEffect(() => {
     setEntered(initialMode !== "landing");
     setEnterpriseMode(initialMode === "enterprise");
+    setProfessionalMode(initialMode === "professional");
     setActiveSection(initialSection);
   }, [initialMode, initialSection]);
 
@@ -454,16 +546,28 @@ export function MedicareApp({
     clearStoredDemoUser();
     setSession(null);
     setEntered(false);
+    setEnterpriseMode(false);
+    setProfessionalMode(false);
     setPendingInvitations([]);
     router.push("/");
   };
 
   const handleEnterpriseDemo = () => {
     setEnterpriseMode(true);
+    setProfessionalMode(false);
     setEntered(true);
     setSession(null);
     clearStoredDemoUser();
     router.push("/empresas");
+  };
+
+  const handleProfessionalDemo = () => {
+    setProfessionalMode(true);
+    setEnterpriseMode(false);
+    setEntered(true);
+    setSession(null);
+    clearStoredDemoUser();
+    router.push("/profesional");
   };
 
   const handleEnterFromLanding = () => {
@@ -473,6 +577,7 @@ export function MedicareApp({
 
   const handleEnterpriseExit = () => {
     setEnterpriseMode(false);
+    setProfessionalMode(false);
     setEntered(true);
     router.push("/ingresar");
   };
@@ -668,6 +773,10 @@ export function MedicareApp({
     return <EnterprisePortal onExit={handleEnterpriseExit} />;
   }
 
+  if (professionalMode) {
+    return <ProfessionalPortal onExit={handleEnterpriseExit} />;
+  }
+
   if (!session) {
     return (
       <LoginScreen
@@ -680,6 +789,7 @@ export function MedicareApp({
         onSignup={handleSignup}
         onAcceptInvitation={handleAcceptInvitation}
         onEnterpriseDemo={handleEnterpriseDemo}
+        onProfessionalDemo={handleProfessionalDemo}
       />
     );
   }
@@ -799,6 +909,1932 @@ export function MedicareApp({
   );
 }
 
+function ProfessionalPortal({ onExit }: { onExit: () => void }) {
+  const [workspaceData, setWorkspaceData] = useState<{
+    professionalName: string;
+    professionalRole: string;
+    patients: ProfessionalPatient[];
+  }>({
+    professionalName: "Camila Ríos",
+    professionalRole: "Enfermería domiciliaria",
+    patients: professionalPatients,
+  });
+  const [isConnected, setIsConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loadProfessionalWorkspaceData()
+      .then((data) => {
+        if (cancelled || !data) return;
+        setWorkspaceData({
+          professionalName: data.professionalName,
+          professionalRole: data.professionalRole,
+          patients: data.patients,
+        });
+        setIsConnected(true);
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : "No se pudo cargar Supabase.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistence: ProfessionalPersistence | undefined = isConnected
+    ? {
+        sourceLabel: "Conectado a Supabase",
+        onAddPatient: async (form) =>
+          createProfessionalPatient({
+            name: form.name.trim(),
+            age: Number(form.age) || 75,
+            diagnosis: form.diagnosis.trim(),
+            location: form.location.trim(),
+            emergencyContact: form.emergencyContact.trim(),
+          }),
+        onUpdatePatient: updateProfessionalPatientProfile,
+        onAddMedication: async (patientId, form) =>
+          createProfessionalMedication(patientId, {
+            name: form.name.trim(),
+            dose: form.dose.trim(),
+            purpose: form.purpose.trim(),
+            time: form.time,
+            frequencyType: form.frequencyType,
+            intervalHours: form.frequencyType === "interval" ? form.intervalHours : 24,
+            weeklyDays: form.frequencyType === "weekly" ? form.weeklyDays : [],
+            reminderEnabled: form.reminderEnabled,
+            reminderEmail: form.reminderEnabled ? form.reminderEmail.trim() : "",
+          }),
+        onRemoveMedication: deleteMedicationPlan,
+        onMedicationStatusChange: updateMedicationPlanStatus,
+        onAddVisit: async (patientId, form) => {
+          const recurrenceGroupId =
+            form.recurrenceType === "once" ? null : createClientUuid();
+          const dates = getVisitSeriesDates(form);
+          return createProfessionalVisits(
+            patientId,
+            dates.map((date) => ({
+              professional: workspaceData.professionalName,
+              role: workspaceData.professionalRole,
+              date,
+              time: form.time,
+              procedures: form.procedures.trim(),
+              notes: form.notes.trim(),
+              status: "pendiente",
+              recurrenceType: form.recurrenceType,
+              recurrenceGroupId,
+              weeklyDays: form.recurrenceType === "weekly" ? form.weeklyDays : [],
+              monthlyDay: form.recurrenceType === "monthly" ? form.monthlyDay : null,
+            })),
+          );
+        },
+        onRemoveVisit: deleteProfessionalVisit,
+        onVisitStatusChange: updateProfessionalVisitStatus,
+        onAddObservation: createProfessionalObservation,
+        onAddFamilyAccess: async (patientId, form) => {
+          const access = buildFamilyAccess(form);
+          return createProfessionalFamilyAccess(patientId, {
+            name: access.name,
+            email: access.email,
+            relationship: access.relationship,
+            accessLevel: access.accessLevel,
+            permissions: access.permissions,
+          });
+        },
+      }
+    : undefined;
+
+  return (
+    <ProfessionalWorkspace
+      initialPatients={workspaceData.patients}
+      professionalName={workspaceData.professionalName}
+      professionalRole={workspaceData.professionalRole}
+      contextLabel="Profesional independiente"
+      heading="Gestión de pacientes propios"
+      description="Agenda, medicación, observaciones e historial clínico digital para quienes trabajan con varios pacientes de manera independiente."
+      loading={loading}
+      error={error}
+      persistence={persistence}
+      onExit={onExit}
+      exitLabel="Volver al ingreso"
+    />
+  );
+}
+
+function ProfessionalWorkspace({
+  initialPatients,
+  professionalName,
+  professionalRole,
+  contextLabel,
+  heading,
+  description,
+  loading = false,
+  error,
+  persistence,
+  onExit,
+  exitLabel,
+  onBack,
+  backLabel,
+}: {
+  initialPatients: ProfessionalPatient[];
+  professionalName: string;
+  professionalRole: string;
+  contextLabel: string;
+  heading: string;
+  description: string;
+  loading?: boolean;
+  error?: string | null;
+  persistence?: ProfessionalPersistence;
+  onExit: () => void;
+  exitLabel: string;
+  onBack?: () => void;
+  backLabel?: string;
+}) {
+  const [patients, setPatients] = useState<ProfessionalPatient[]>(initialPatients);
+  const [selectedPatientId, setSelectedPatientId] = useState(initialPatients[0]?.id ?? "");
+  const [search, setSearch] = useState("");
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [savingLabel, setSavingLabel] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"resumen" | "pacientes" | "visitas" | "actividad">(
+    "resumen",
+  );
+
+  useEffect(() => {
+    setPatients(initialPatients);
+    setSelectedPatientId((current) =>
+      initialPatients.some((patient) => patient.id === current)
+        ? current
+        : initialPatients[0]?.id ?? "",
+    );
+  }, [initialPatients]);
+
+  const visiblePatients = patients.filter((patient) =>
+    [patient.name, patient.diagnosis, patient.location, patient.generalStatus]
+      .join(" ")
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
+  const selectedPatient =
+    visiblePatients.find((patient) => patient.id === selectedPatientId) ??
+    visiblePatients[0] ??
+    patients[0];
+  const scheduledVisits = getProfessionalScheduledVisits(patients);
+  const todaysVisits = patients.reduce(
+    (total, patient) => total + patient.visits.filter((visit) => visit.status === "pendiente").length,
+    0,
+  );
+  const pendingMedications = patients.reduce(
+    (total, patient) =>
+      total + patient.medications.filter((medication) => medication.status !== "tomado").length,
+    0,
+  );
+  const averageAdherence = Math.round(
+    patients.reduce((total, patient) => total + getProfessionalAdherence(patient), 0) /
+      Math.max(patients.length, 1),
+  );
+
+  const replacePatient = (updatedPatient: ProfessionalPatient) => {
+    setPatients((current) =>
+      current.some((patient) => patient.id === updatedPatient.id)
+        ? current.map((patient) => (patient.id === updatedPatient.id ? updatedPatient : patient))
+        : [updatedPatient, ...current],
+    );
+    setSelectedPatientId(updatedPatient.id);
+  };
+
+  const handlePersistedAction = async (
+    label: string,
+    action: () => Promise<ProfessionalPatient>,
+  ) => {
+    setSavingLabel(label);
+    setWorkspaceError(null);
+    try {
+      replacePatient(await action());
+    } catch (actionError) {
+      setWorkspaceError(
+        actionError instanceof Error ? actionError.message : "No se pudo guardar en Supabase.",
+      );
+    } finally {
+      setSavingLabel(null);
+    }
+  };
+
+  const addPatient = async (form: ProfessionalPatientForm) => {
+    if (persistence) {
+      await handlePersistedAction("Creando paciente...", () => persistence.onAddPatient(form));
+      return;
+    }
+
+    const patient: ProfessionalPatient = {
+      id: `professional-patient-${Date.now()}`,
+      name: form.name.trim(),
+      age: Number(form.age) || 75,
+      diagnosis: form.diagnosis.trim(),
+      location: form.location.trim(),
+      emergencyContact: form.emergencyContact.trim(),
+      generalStatus: "Nuevo paciente",
+      allergies: "Sin datos cargados",
+      carePlan: "Plan de cuidado pendiente de definir.",
+      clinicalNotes: "Paciente creado desde el panel profesional.",
+      medications: [],
+      visits: [],
+      history: [
+        {
+          id: `professional-history-${Date.now()}`,
+          date: getShortTimestamp(),
+          title: "Paciente agregado",
+          detail: "Se creó la ficha inicial del paciente.",
+          type: "nota",
+        },
+      ],
+      familyAccesses: [],
+    };
+    setPatients((current) => [patient, ...current]);
+    setSelectedPatientId(patient.id);
+  };
+
+  const updatePatient = async (
+    patientId: string,
+    updates: Pick<ProfessionalPatient, "generalStatus" | "allergies" | "carePlan" | "clinicalNotes">,
+  ) => {
+    if (persistence) {
+      await handlePersistedAction("Guardando ficha...", () =>
+        persistence.onUpdatePatient(patientId, updates),
+      );
+      return;
+    }
+
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              ...updates,
+              history: [
+                {
+                  id: `professional-history-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Ficha actualizada",
+                  detail: "Se modificó la información clínica del paciente.",
+                  type: "nota",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  const addMedication = async (patientId: string, form: ProfessionalMedicationForm) => {
+    if (persistence) {
+      await handlePersistedAction("Guardando medicación...", () =>
+        persistence.onAddMedication(patientId, form),
+      );
+      return;
+    }
+
+    const medication: Medication = {
+      id: `professional-medication-${Date.now()}`,
+      name: form.name.trim(),
+      dose: form.dose.trim(),
+      purpose: form.purpose.trim(),
+      time: form.time,
+      status: "pendiente",
+      frequencyType: form.frequencyType,
+      intervalHours: form.frequencyType === "interval" ? form.intervalHours : 24,
+      weeklyDays: form.frequencyType === "weekly" ? form.weeklyDays : [],
+      reminderEnabled: form.reminderEnabled,
+      reminderEmail: form.reminderEnabled ? form.reminderEmail.trim() : "",
+    };
+
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              medications: [...patient.medications, medication].sort((a, b) =>
+                a.time.localeCompare(b.time),
+              ),
+              history: [
+                {
+                  id: `professional-history-med-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Medicación agregada",
+                  detail: `${medication.name} ${medication.dose} a las ${medication.time}.`,
+                  type: "medicacion",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  const removeMedication = async (patientId: string, medicationId: string) => {
+    if (persistence) {
+      await handlePersistedAction("Quitando medicación...", () =>
+        persistence.onRemoveMedication(patientId, medicationId),
+      );
+      return;
+    }
+
+    setPatients((current) =>
+      current.map((patient) => {
+        if (patient.id !== patientId) return patient;
+        const medication = patient.medications.find((item) => item.id === medicationId);
+        return {
+          ...patient,
+          medications: patient.medications.filter((item) => item.id !== medicationId),
+          history: [
+            {
+              id: `professional-history-remove-med-${Date.now()}`,
+              date: getShortTimestamp(),
+              title: "Medicación retirada",
+              detail: medication ? `${medication.name} fue quitada del plan.` : "Se quitó una medicación.",
+              type: "medicacion",
+            },
+            ...patient.history,
+          ],
+        };
+      }),
+    );
+  };
+
+  const updateMedicationStatus = (
+    patientId: string,
+    medicationId: string,
+    status: MedicationStatus,
+  ) => {
+    if (persistence) {
+      const medication = patients
+        .find((patient) => patient.id === patientId)
+        ?.medications.find((item) => item.id === medicationId);
+      void handlePersistedAction("Actualizando toma...", () =>
+        persistence.onMedicationStatusChange(
+          patientId,
+          medicationId,
+          medication?.time ?? "08:00",
+          status,
+        ),
+      );
+      return;
+    }
+
+    setPatients((current) =>
+      current.map((patient) => {
+        if (patient.id !== patientId) return patient;
+        const medication = patient.medications.find((item) => item.id === medicationId);
+        return {
+          ...patient,
+          medications: patient.medications.map((item) =>
+            item.id === medicationId ? { ...item, status } : item,
+          ),
+          history: [
+            {
+              id: `professional-history-status-med-${Date.now()}`,
+              date: getShortTimestamp(),
+              title: status === "tomado" ? "Toma confirmada" : "Toma no confirmada",
+              detail: medication
+                ? `${medication.name} de las ${medication.time} quedó como ${status}.`
+                : `Una medicación quedó como ${status}.`,
+              type: "medicacion",
+            },
+            ...patient.history,
+          ],
+        };
+      }),
+    );
+  };
+
+  const addVisit = async (patientId: string, form: ProfessionalVisitForm) => {
+    if (persistence) {
+      await handlePersistedAction("Agendando visita...", () =>
+        persistence.onAddVisit(patientId, form),
+      );
+      return;
+    }
+
+    const dates = getVisitSeriesDates(form);
+    const recurrenceGroupId = form.recurrenceType === "once" ? null : createClientUuid();
+    const createdVisits: Visit[] = dates.map((date, index) => ({
+      id: `professional-visit-${Date.now()}-${index}`,
+      professional: professionalName,
+      role: professionalRole,
+      date: formatSelectedDate(date),
+      dateIso: date,
+      time: form.time,
+      procedures: form.procedures.trim(),
+      notes: form.notes.trim(),
+      status: "pendiente",
+      recurrenceType: form.recurrenceType,
+      recurrenceGroupId,
+      weeklyDays: form.recurrenceType === "weekly" ? form.weeklyDays : [],
+      monthlyDay: form.recurrenceType === "monthly" ? form.monthlyDay : null,
+    }));
+
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              visits: [...patient.visits, ...createdVisits].sort(compareVisitsBySchedule),
+              history: [
+                {
+                  id: `professional-history-visit-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Visita programada",
+                  detail: `${createdVisits.length} visita${createdVisits.length === 1 ? "" : "s"} agregada${createdVisits.length === 1 ? "" : "s"} a la agenda.`,
+                  type: "visita",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  const removeVisit = async (patientId: string, visitId: string) => {
+    if (persistence) {
+      await handlePersistedAction("Quitando visita...", () =>
+        persistence.onRemoveVisit(patientId, visitId),
+      );
+      return;
+    }
+
+    setPatients((current) =>
+      current.map((patient) => {
+        if (patient.id !== patientId) return patient;
+        const visit = patient.visits.find((item) => item.id === visitId);
+        return {
+          ...patient,
+          visits: patient.visits.filter((item) => item.id !== visitId),
+          history: [
+            {
+              id: `professional-history-remove-visit-${Date.now()}`,
+              date: getShortTimestamp(),
+              title: "Visita eliminada",
+              detail: visit ? `${visit.date} ${visit.time} fue quitada de agenda.` : "Se quitó una visita.",
+              type: "visita",
+            },
+            ...patient.history,
+          ],
+        };
+      }),
+    );
+  };
+
+  const updateVisit = async (patientId: string, visitId: string, status: VisitStatus) => {
+    if (persistence) {
+      await handlePersistedAction("Actualizando visita...", () =>
+        persistence.onVisitStatusChange(patientId, visitId, status),
+      );
+      return;
+    }
+
+    setPatients((current) =>
+      current.map((patient) => {
+        if (patient.id !== patientId) return patient;
+        const visit = patient.visits.find((item) => item.id === visitId);
+        return {
+          ...patient,
+          visits: patient.visits.map((item) =>
+            item.id === visitId ? { ...item, status } : item,
+          ),
+          history: [
+            {
+              id: `professional-history-status-visit-${Date.now()}`,
+              date: getShortTimestamp(),
+              title: `Visita ${status}`,
+              detail: visit
+                ? `${visit.procedures} de las ${visit.time} quedó como ${status}.`
+                : `Una visita quedó como ${status}.`,
+              type: "visita",
+            },
+            ...patient.history,
+          ],
+        };
+      }),
+    );
+  };
+
+  const addObservation = async (patientId: string, observation: string) => {
+    if (persistence) {
+      await handlePersistedAction("Guardando observación...", () =>
+        persistence.onAddObservation(patientId, observation.trim()),
+      );
+      return;
+    }
+
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              clinicalNotes: observation.trim(),
+              history: [
+                {
+                  id: `professional-history-note-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Observación clínica",
+                  detail: observation.trim(),
+                  type: "nota",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  const addFamilyAccess = async (patientId: string, form: FamilyAccessForm) => {
+    if (persistence) {
+      await handlePersistedAction("Enviando invitación...", () =>
+        persistence.onAddFamilyAccess(patientId, form),
+      );
+      return;
+    }
+
+    const access = buildFamilyAccess(form);
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              familyAccesses: [access, ...patient.familyAccesses],
+              history: [
+                {
+                  id: `professional-history-family-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Familiar invitado",
+                  detail: `${access.name} recibirá acceso ${formatAccessLevel(access.accessLevel)} al dashboard.`,
+                  type: "nota",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  return (
+    <main className="min-h-screen bg-slate-50 text-slate-950">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600 text-white">
+              <Stethoscope size={23} />
+            </div>
+            <div>
+              <p className="font-bold tracking-wide">MEDICARE Profesional</p>
+              <p className="text-xs text-slate-500">{professionalRole}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {onBack ? (
+              <button
+                onClick={onBack}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+              >
+                {backLabel}
+              </button>
+            ) : null}
+            <button
+              onClick={onExit}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+            >
+              {exitLabel}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mb-5">
+          <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-600">
+            {contextLabel}
+          </p>
+          <h1 className="mt-2 text-3xl font-bold text-slate-950 sm:text-4xl">
+            {heading}
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 sm:text-base">
+            {description}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
+            <span className={`rounded-full px-3 py-1 ${
+              persistence ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
+            }`}>
+              {persistence?.sourceLabel ?? "Modo demo local"}
+            </span>
+            {loading ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-blue-700">
+                <Loader2 className="animate-spin" size={13} />
+                Cargando Supabase
+              </span>
+            ) : null}
+            {savingLabel ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-3 py-1 text-violet-700">
+                <Loader2 className="animate-spin" size={13} />
+                {savingLabel}
+              </span>
+            ) : null}
+          </div>
+          {error || workspaceError ? (
+            <p className="mt-3 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {workspaceError ?? error}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard title="Pacientes" value={String(patients.length)} detail="Cartera activa" icon={Users} tone="blue" />
+          <StatCard title="Adherencia" value={`${averageAdherence}%`} detail="Promedio de tomas" icon={Pill} tone={averageAdherence >= 75 ? "green" : "amber"} />
+          <StatCard title="Visitas pendientes" value={String(todaysVisits)} detail="Agenda activa" icon={CalendarClock} tone={todaysVisits > 0 ? "amber" : "green"} />
+          <StatCard title="Tomas pendientes" value={String(pendingMedications)} detail="Requieren control" icon={Bell} tone={pendingMedications > 0 ? "amber" : "green"} />
+        </div>
+
+        <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+          <div className="grid min-w-[620px] grid-cols-4 gap-1">
+            {[
+              { id: "resumen", label: "Resumen", icon: UserRound },
+              { id: "pacientes", label: "Pacientes", icon: Users },
+              { id: "visitas", label: "Visitas", icon: CalendarClock },
+              { id: "actividad", label: "Actividad", icon: ClipboardCheck },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                  className={`flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition ${
+                    active
+                      ? "bg-violet-600 text-white"
+                      : "text-slate-500 hover:bg-slate-100 hover:text-slate-950"
+                  }`}
+                >
+                  <Icon size={17} />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {activeTab === "resumen" ? (
+          <ProfessionalOverview
+            patients={patients}
+            scheduledVisits={scheduledVisits}
+            averageAdherence={averageAdherence}
+            pendingMedications={pendingMedications}
+            professionalName={professionalName}
+            professionalRole={professionalRole}
+            onOpenPatients={() => setActiveTab("pacientes")}
+            onOpenVisits={() => setActiveTab("visitas")}
+          />
+        ) : null}
+
+        {activeTab === "pacientes" ? (
+          <div className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+            <div className="space-y-5">
+              <ProfessionalPatientList
+                patients={visiblePatients}
+                selectedPatientId={selectedPatient?.id}
+                search={search}
+                onSearchChange={setSearch}
+                onSelectPatient={setSelectedPatientId}
+              />
+              <AddProfessionalPatientForm onAddPatient={addPatient} />
+            </div>
+            {selectedPatient ? (
+              <ProfessionalPatientDetail
+                patient={selectedPatient}
+                onUpdatePatient={updatePatient}
+                onAddMedication={addMedication}
+                onRemoveMedication={removeMedication}
+                onMedicationStatusChange={updateMedicationStatus}
+                onAddVisit={addVisit}
+                onRemoveVisit={removeVisit}
+                onVisitStatusChange={updateVisit}
+                onAddObservation={addObservation}
+                onAddFamilyAccess={addFamilyAccess}
+              />
+            ) : (
+              <article className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm">
+                No hay pacientes para esa búsqueda.
+              </article>
+            )}
+          </div>
+        ) : null}
+
+        {activeTab === "visitas" ? (
+          <ProfessionalAgenda
+            visits={scheduledVisits}
+            onVisitStatusChange={updateVisit}
+            onRemoveVisit={removeVisit}
+          />
+        ) : null}
+
+        {activeTab === "actividad" ? (
+          <ProfessionalActivity patients={patients} />
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
+function ProfessionalOverview({
+  patients,
+  scheduledVisits,
+  averageAdherence,
+  pendingMedications,
+  professionalName,
+  professionalRole,
+  onOpenPatients,
+  onOpenVisits,
+}: {
+  patients: ProfessionalPatient[];
+  scheduledVisits: ProfessionalScheduledVisit[];
+  averageAdherence: number;
+  pendingMedications: number;
+  professionalName: string;
+  professionalRole: string;
+  onOpenPatients: () => void;
+  onOpenVisits: () => void;
+}) {
+  const priorityPatients = patients
+    .filter(
+      (patient) =>
+        getProfessionalAdherence(patient) < 75 ||
+        patient.medications.some((medication) => medication.status === "atrasado") ||
+        patient.generalStatus.toLowerCase().includes("alerta"),
+    )
+    .slice(0, 3);
+
+  return (
+    <div className="mt-5 grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+      <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex items-start gap-4">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-xl font-bold text-white">
+            {getInitials(professionalName)}
+          </div>
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.12em] text-violet-600">
+              Mi panel
+            </p>
+            <h2 className="mt-1 text-2xl font-bold text-slate-950">{professionalName}</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {professionalRole}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-500">Pacientes activos</p>
+            <p className="mt-2 text-3xl font-bold text-slate-950">{patients.length}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-500">Adherencia promedio</p>
+            <p className="mt-2 text-3xl font-bold text-violet-700">{averageAdherence}%</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-500">Próximas visitas</p>
+            <p className="mt-2 text-3xl font-bold text-slate-950">{scheduledVisits.length}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-500">Tomas a revisar</p>
+            <p className="mt-2 text-3xl font-bold text-amber-700">{pendingMedications}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button
+            onClick={onOpenPatients}
+            className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white"
+          >
+            <Users size={17} />
+            Ver pacientes
+          </button>
+          <button
+            onClick={onOpenVisits}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
+          >
+            <CalendarClock size={17} />
+            Ver agenda
+          </button>
+        </div>
+      </article>
+
+      <div className="space-y-5">
+        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">Próximas visitas</h2>
+              <p className="mt-1 text-sm text-slate-500">Agenda inmediata del profesional.</p>
+            </div>
+            <Clock className="text-violet-600" size={22} />
+          </div>
+          <div className="mt-4 space-y-3">
+            {scheduledVisits.slice(0, 4).map((item) => (
+              <div
+                key={`${item.patientId}-${item.visit.id}`}
+                className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[88px_1fr]"
+              >
+                <p className="text-sm font-bold text-violet-700">{item.visit.time}</p>
+                <div>
+                  <p className="font-bold text-slate-950">{item.patientName}</p>
+                  <p className="text-sm text-slate-500">{item.visit.procedures}</p>
+                </div>
+              </div>
+            ))}
+            {scheduledVisits.length === 0 ? (
+              <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
+                No hay visitas pendientes.
+              </p>
+            ) : null}
+          </div>
+        </article>
+
+        <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">Pacientes a revisar</h2>
+              <p className="mt-1 text-sm text-slate-500">Casos con tomas atrasadas o bajo cumplimiento.</p>
+            </div>
+            <AlertTriangle className="text-amber-600" size={22} />
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {priorityPatients.map((patient) => (
+              <div key={patient.id} className="rounded-xl bg-amber-50 p-3">
+                <p className="font-bold text-slate-950">{patient.name}</p>
+                <p className="mt-1 text-sm text-slate-600">{patient.generalStatus}</p>
+                <p className="mt-2 text-xs font-bold text-amber-700">
+                  {getProfessionalAdherence(patient)}% adherencia
+                </p>
+              </div>
+            ))}
+            {priorityPatients.length === 0 ? (
+              <p className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
+                Sin pacientes críticos en este momento.
+              </p>
+            ) : null}
+          </div>
+        </article>
+      </div>
+    </div>
+  );
+}
+
+function ProfessionalAgenda({
+  visits,
+  onVisitStatusChange,
+  onRemoveVisit,
+}: {
+  visits: ProfessionalScheduledVisit[];
+  onVisitStatusChange: (patientId: string, visitId: string, status: VisitStatus) => void;
+  onRemoveVisit: (patientId: string, visitId: string) => void;
+}) {
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-slate-950">Visitas agendadas</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Todas las visitas futuras del profesional, agrupadas por paciente.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+          {visits.length} pendientes
+        </span>
+      </div>
+
+      <div className="mt-5 overflow-hidden rounded-xl border border-slate-100">
+        {visits.map((item) => (
+          <div
+            key={`${item.patientId}-${item.visit.id}`}
+            className="grid gap-3 border-b border-slate-100 p-4 last:border-b-0 lg:grid-cols-[120px_1fr_auto] lg:items-center"
+          >
+            <div>
+              <p className="text-sm font-bold text-violet-700">{item.visit.date}</p>
+              <p className="mt-1 text-2xl font-bold text-slate-950">{item.visit.time}</p>
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-slate-950">{item.patientName}</h3>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                  {item.patientAge} años
+                </span>
+                <StatusBadge value={item.visit.status} />
+              </div>
+              <p className="mt-1 text-sm text-slate-500">{item.visit.procedures}</p>
+              {item.visit.notes ? (
+                <p className="mt-1 text-xs text-slate-500">{item.visit.notes}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              {item.visit.status === "pendiente" ? (
+                <button
+                  onClick={() => onVisitStatusChange(item.patientId, item.visit.id, "realizada")}
+                  className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"
+                >
+                  Confirmar
+                </button>
+              ) : null}
+              <button
+                onClick={() => onRemoveVisit(item.patientId, item.visit.id)}
+                className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700"
+              >
+                Quitar
+              </button>
+            </div>
+          </div>
+        ))}
+        {visits.length === 0 ? (
+          <p className="p-4 text-sm text-slate-500">No hay visitas futuras cargadas.</p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function ProfessionalActivity({ patients }: { patients: ProfessionalPatient[] }) {
+  const events = patients
+    .flatMap((patient) =>
+      patient.history.map((event) => ({
+        ...event,
+        patientName: patient.name,
+      })),
+    )
+    .slice(0, 12);
+
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-slate-950">Actividad reciente</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Últimos registros clínicos y operativos de todos los pacientes.
+          </p>
+        </div>
+        <ClipboardCheck className="text-violet-600" size={24} />
+      </div>
+      <div className="mt-5 space-y-3">
+        {events.map((event) => (
+          <div
+            key={`${event.patientName}-${event.id}`}
+            className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[120px_1fr]"
+          >
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.1em] text-slate-400">
+                {event.date}
+              </p>
+              <span className="mt-2 inline-flex rounded-full bg-white px-2 py-1 text-[11px] font-bold text-slate-600">
+                {event.type}
+              </span>
+            </div>
+            <div>
+              <p className="font-bold text-slate-950">{event.patientName} · {event.title}</p>
+              <p className="mt-1 text-sm leading-6 text-slate-500">{event.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ProfessionalPatientList({
+  patients,
+  selectedPatientId,
+  search,
+  onSearchChange,
+  onSelectPatient,
+}: {
+  patients: ProfessionalPatient[];
+  selectedPatientId?: string;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onSelectPatient: (id: string) => void;
+}) {
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-slate-950">Mis pacientes</h2>
+          <p className="mt-1 text-sm text-slate-500">{patients.length} resultados</p>
+        </div>
+        <input
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Buscar paciente..."
+          className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-violet-500 sm:max-w-xs"
+        />
+      </div>
+
+      <div className="mt-4 grid max-h-[620px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-1">
+        {patients.map((patient) => {
+          const adherence = getProfessionalAdherence(patient);
+          const pendingVisits = patient.visits.filter((visit) => visit.status === "pendiente").length;
+          return (
+            <button
+              key={patient.id}
+              onClick={() => onSelectPatient(patient.id)}
+              className={`w-full rounded-2xl border p-4 text-left transition ${
+                selectedPatientId === patient.id
+                  ? "border-violet-200 bg-violet-50"
+                  : "border-slate-200 bg-white hover:border-violet-200 hover:bg-slate-50"
+              }`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-slate-950">{patient.name}</h3>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">
+                  {patient.age} años
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{patient.location}</p>
+              <p className="mt-1 truncate text-xs font-semibold text-violet-700">
+                {patient.diagnosis}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700">
+                  {adherence}% tomas
+                </span>
+                <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">
+                  {pendingVisits} visitas pend.
+                </span>
+              </div>
+              <p className="mt-3 text-xs font-bold text-violet-700">Abrir ficha</p>
+            </button>
+          );
+        })}
+        {patients.length === 0 ? (
+          <p className="p-4 text-sm text-slate-500">No hay pacientes para esa búsqueda.</p>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function AddProfessionalPatientForm({
+  onAddPatient,
+}: {
+  onAddPatient: (form: ProfessionalPatientForm) => void;
+}) {
+  const [form, setForm] = useState<ProfessionalPatientForm>({
+    name: "",
+    age: "75",
+    diagnosis: "",
+    location: "",
+    emergencyContact: "",
+  });
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!form.name.trim() || !form.diagnosis.trim()) return;
+        onAddPatient(form);
+        setForm({ name: "", age: "75", diagnosis: "", location: "", emergencyContact: "" });
+      }}
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+    >
+      <h2 className="text-lg font-bold text-slate-950">Agregar paciente</h2>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+        <TextField label="Nombre" value={form.name} onChange={(value) => setForm((current) => ({ ...current, name: value }))} required />
+        <TextField label="Edad" type="number" value={form.age} onChange={(value) => setForm((current) => ({ ...current, age: value }))} required />
+        <TextField label="Diagnóstico / motivo" value={form.diagnosis} onChange={(value) => setForm((current) => ({ ...current, diagnosis: value }))} required />
+        <TextField label="Ubicación" value={form.location} onChange={(value) => setForm((current) => ({ ...current, location: value }))} />
+        <TextField label="Contacto de emergencia" value={form.emergencyContact} onChange={(value) => setForm((current) => ({ ...current, emergencyContact: value }))} />
+      </div>
+      <button className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-700">
+        <Plus size={17} />
+        Crear ficha
+      </button>
+    </form>
+  );
+}
+
+function ProfessionalPatientDetail({
+  patient,
+  onUpdatePatient,
+  onAddMedication,
+  onRemoveMedication,
+  onMedicationStatusChange,
+  onAddVisit,
+  onRemoveVisit,
+  onVisitStatusChange,
+  onAddObservation,
+  onAddFamilyAccess,
+}: {
+  patient: ProfessionalPatient;
+  onUpdatePatient: (
+    patientId: string,
+    updates: Pick<ProfessionalPatient, "generalStatus" | "allergies" | "carePlan" | "clinicalNotes">,
+  ) => void;
+  onAddMedication: (patientId: string, form: ProfessionalMedicationForm) => void;
+  onRemoveMedication: (patientId: string, medicationId: string) => void;
+  onMedicationStatusChange: (
+    patientId: string,
+    medicationId: string,
+    status: MedicationStatus,
+  ) => void;
+  onAddVisit: (patientId: string, form: ProfessionalVisitForm) => void;
+  onRemoveVisit: (patientId: string, visitId: string) => void;
+  onVisitStatusChange: (patientId: string, visitId: string, status: VisitStatus) => void;
+  onAddObservation: (patientId: string, observation: string) => void;
+  onAddFamilyAccess: (patientId: string, form: FamilyAccessForm) => void;
+}) {
+  const adherence = getProfessionalAdherence(patient);
+  const [detailTab, setDetailTab] = useState<"info" | "medicacion" | "visitas" | "historial" | "familia">(
+    "info",
+  );
+  const [profileForm, setProfileForm] = useState({
+    generalStatus: patient.generalStatus,
+    allergies: patient.allergies,
+    carePlan: patient.carePlan,
+    clinicalNotes: patient.clinicalNotes,
+  });
+
+  useEffect(() => {
+    setProfileForm({
+      generalStatus: patient.generalStatus,
+      allergies: patient.allergies,
+      carePlan: patient.carePlan,
+      clinicalNotes: patient.clinicalNotes,
+    });
+  }, [patient]);
+
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.12em] text-violet-600">
+            Ficha del paciente
+          </p>
+          <h2 className="mt-1 text-2xl font-bold text-slate-950">{patient.name}</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {patient.age} años · {patient.location}
+          </p>
+          <p className="mt-2 text-sm font-semibold text-slate-700">{patient.diagnosis}</p>
+        </div>
+        <span className="w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+          {patient.generalStatus}
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-500">Adherencia de hoy</p>
+          <p className="mt-2 text-3xl font-bold text-violet-700">{adherence}%</p>
+          <div className="mt-3">
+            <ProgressBar value={adherence} tone={adherence >= 75 ? "green" : "amber"} />
+          </div>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-500">Medicamentos</p>
+          <p className="mt-2 text-3xl font-bold text-slate-950">{patient.medications.length}</p>
+          <p className="mt-1 text-xs text-slate-500">Plan activo</p>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-500">Visitas pendientes</p>
+          <p className="mt-2 text-3xl font-bold text-slate-950">
+            {patient.visits.filter((visit) => visit.status === "pendiente").length}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">Agenda próxima</p>
+        </div>
+      </div>
+
+      <ProfessionalTodayPanel
+        patient={patient}
+        onMedicationStatusChange={onMedicationStatusChange}
+        onVisitStatusChange={onVisitStatusChange}
+      />
+
+      <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-1">
+        <div className="grid min-w-[720px] grid-cols-5 gap-1">
+          {[
+            { id: "info", label: "Info general", icon: UserRound },
+            { id: "medicacion", label: "Medicación", icon: Pill },
+            { id: "visitas", label: "Visitas", icon: CalendarClock },
+            { id: "historial", label: "Historial", icon: ClipboardCheck },
+            { id: "familia", label: "Familia", icon: Users },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = detailTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setDetailTab(tab.id as typeof detailTab)}
+                className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold transition ${
+                  active
+                    ? "bg-white text-violet-700 shadow-sm"
+                    : "text-slate-500 hover:bg-white/70 hover:text-slate-950"
+                }`}
+              >
+                <Icon size={16} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {detailTab === "info" ? (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onUpdatePatient(patient.id, profileForm);
+        }}
+        className="mt-5 rounded-2xl border border-slate-200 p-4"
+      >
+        <h3 className="font-bold text-slate-950">Información clínica</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <TextField label="Estado general" value={profileForm.generalStatus} onChange={(value) => setProfileForm((current) => ({ ...current, generalStatus: value }))} />
+          <TextField label="Alergias" value={profileForm.allergies} onChange={(value) => setProfileForm((current) => ({ ...current, allergies: value }))} />
+          <TextAreaField label="Plan de cuidado" value={profileForm.carePlan} onChange={(value) => setProfileForm((current) => ({ ...current, carePlan: value }))} />
+          <TextAreaField label="Notas clínicas" value={profileForm.clinicalNotes} onChange={(value) => setProfileForm((current) => ({ ...current, clinicalNotes: value }))} />
+        </div>
+        <button className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white">
+          <Save size={17} />
+          Guardar ficha
+        </button>
+      </form>
+      ) : null}
+
+      {detailTab === "medicacion" ? (
+        <ProfessionalMedicationPanel
+          patient={patient}
+          onAddMedication={onAddMedication}
+          onRemoveMedication={onRemoveMedication}
+          onMedicationStatusChange={onMedicationStatusChange}
+        />
+      ) : null}
+
+      {detailTab === "visitas" ? (
+        <ProfessionalVisitPanel
+          patient={patient}
+          onAddVisit={onAddVisit}
+          onRemoveVisit={onRemoveVisit}
+          onVisitStatusChange={onVisitStatusChange}
+        />
+      ) : null}
+
+      {detailTab === "historial" ? (
+        <ProfessionalHistoryPanel patient={patient} onAddObservation={onAddObservation} />
+      ) : null}
+
+      {detailTab === "familia" ? (
+      <FamilyAccessPanel
+        patientId={patient.id}
+        familyAccesses={patient.familyAccesses}
+        ownerLabel="profesional"
+        onAddFamilyAccess={onAddFamilyAccess}
+      />
+      ) : null}
+    </article>
+  );
+}
+
+function ProfessionalTodayPanel({
+  patient,
+  onMedicationStatusChange,
+  onVisitStatusChange,
+}: {
+  patient: ProfessionalPatient;
+  onMedicationStatusChange: (
+    patientId: string,
+    medicationId: string,
+    status: MedicationStatus,
+  ) => void;
+  onVisitStatusChange: (patientId: string, visitId: string, status: VisitStatus) => void;
+}) {
+  const todayIso = getTodayIso();
+  const todayMedications = patient.medications
+    .filter((medication) => isMedicationScheduledToday(medication, todayIso))
+    .sort((a, b) => a.time.localeCompare(b.time));
+  const todayVisits = patient.visits
+    .filter((visit) => (visit.dateIso ?? toIsoDate(visit.date)) === todayIso)
+    .sort(compareVisitsBySchedule);
+  const completedTasks =
+    todayMedications.filter((medication) => medication.status === "tomado").length +
+    todayVisits.filter((visit) => visit.status === "realizada").length;
+  const totalTasks = todayMedications.length + todayVisits.length;
+
+  return (
+    <section className="mt-5 rounded-2xl border border-violet-100 bg-violet-50 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-lg font-bold text-slate-950">Hoy</h3>
+          <p className="mt-1 text-sm text-violet-800">
+            {completedTasks} de {totalTasks} tareas completadas para este paciente.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-bold text-violet-700">
+          {formatSelectedDate(todayIso)}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="font-bold text-slate-950">Medicación de hoy</h4>
+              <p className="mt-1 text-sm text-slate-500">
+                {todayMedications.filter((medication) => medication.status === "tomado").length} de{" "}
+                {todayMedications.length} tomadas.
+              </p>
+            </div>
+            <Pill className="text-blue-600" size={22} />
+          </div>
+          <div className="mt-3 space-y-2">
+            {todayMedications.map((medication) => (
+              <div
+                key={`${patient.id}-today-${medication.id}`}
+                className="grid gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-[72px_1fr_auto] sm:items-center"
+              >
+                <p className="text-sm font-bold text-blue-700">{medication.time}</p>
+                <div>
+                  <p className="font-bold text-slate-950">{medication.name}</p>
+                  <p className="text-sm text-slate-500">{medication.dose}</p>
+                </div>
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  <StatusBadge value={medication.status} />
+                  {medication.status !== "tomado" ? (
+                    <button
+                      onClick={() => onMedicationStatusChange(patient.id, medication.id, "tomado")}
+                      className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"
+                    >
+                      Tomó
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {todayMedications.length === 0 ? (
+              <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
+                No hay medicación indicada para hoy.
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="font-bold text-slate-950">Visitas de hoy</h4>
+              <p className="mt-1 text-sm text-slate-500">
+                {todayVisits.filter((visit) => visit.status === "realizada").length} de{" "}
+                {todayVisits.length} realizadas.
+              </p>
+            </div>
+            <CalendarClock className="text-violet-600" size={22} />
+          </div>
+          <div className="mt-3 space-y-2">
+            {todayVisits.map((visit) => (
+              <div
+                key={`${patient.id}-today-${visit.id}`}
+                className="grid gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-[72px_1fr_auto] sm:items-center"
+              >
+                <p className="text-sm font-bold text-violet-700">{visit.time}</p>
+                <div>
+                  <p className="font-bold text-slate-950">{visit.procedures}</p>
+                  <p className="text-sm text-slate-500">{visit.notes || visit.role}</p>
+                </div>
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  <StatusBadge value={visit.status} />
+                  {visit.status === "pendiente" ? (
+                    <button
+                      onClick={() => onVisitStatusChange(patient.id, visit.id, "realizada")}
+                      className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"
+                    >
+                      Confirmar
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {todayVisits.length === 0 ? (
+              <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">
+                No hay visitas programadas para hoy.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProfessionalMedicationPanel({
+  patient,
+  onAddMedication,
+  onRemoveMedication,
+  onMedicationStatusChange,
+}: {
+  patient: ProfessionalPatient;
+  onAddMedication: (patientId: string, form: ProfessionalMedicationForm) => void;
+  onRemoveMedication: (patientId: string, medicationId: string) => void;
+  onMedicationStatusChange: (
+    patientId: string,
+    medicationId: string,
+    status: MedicationStatus,
+  ) => void;
+}) {
+  const [form, setForm] = useState<ProfessionalMedicationForm>({
+    name: "",
+    dose: "",
+    purpose: "",
+    time: "08:00",
+    frequencyType: "daily",
+    intervalHours: 12,
+    weeklyDays: [getWeekdayFromIso(getTodayIso())],
+    reminderEnabled: false,
+    reminderEmail: "",
+  });
+
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-200 p-4">
+      <h3 className="font-bold text-slate-950">Medicación</h3>
+      <div className="mt-3 space-y-2">
+        {patient.medications.map((medication) => (
+          <div key={medication.id} className="rounded-xl bg-slate-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-bold text-slate-950">{medication.name}</p>
+                <p className="text-sm text-slate-500">
+                  {medication.dose} · {medication.time} · {formatMedicationFrequency(medication)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">{medication.purpose}</p>
+              </div>
+              <StatusBadge value={medication.status} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                onClick={() => onMedicationStatusChange(patient.id, medication.id, "tomado")}
+                className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"
+              >
+                Tomó
+              </button>
+              <button
+                onClick={() => onMedicationStatusChange(patient.id, medication.id, "atrasado")}
+                className="rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700"
+              >
+                No tomó
+              </button>
+              <button
+                onClick={() => onRemoveMedication(patient.id, medication.id)}
+                className="rounded-lg bg-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700"
+              >
+                Quitar
+              </button>
+            </div>
+          </div>
+        ))}
+        {patient.medications.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Sin medicación cargada.</p>
+        ) : null}
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!form.name.trim() || !form.dose.trim()) return;
+          onAddMedication(patient.id, form);
+          setForm({
+            name: "",
+            dose: "",
+            purpose: "",
+            time: "08:00",
+            frequencyType: "daily",
+            intervalHours: 12,
+            weeklyDays: [getWeekdayFromIso(getTodayIso())],
+            reminderEnabled: false,
+            reminderEmail: "",
+          });
+        }}
+        className="mt-4 rounded-xl bg-violet-50 p-3"
+      >
+        <p className="text-sm font-bold text-violet-900">Agregar medicamento</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <TextField label="Nombre" value={form.name} onChange={(value) => setForm((current) => ({ ...current, name: value }))} required />
+          <TextField label="Dosis" value={form.dose} onChange={(value) => setForm((current) => ({ ...current, dose: value }))} required />
+          <TextField label="Horario inicial" type="time" value={form.time} onChange={(value) => setForm((current) => ({ ...current, time: value }))} />
+          <SelectField
+            label="Frecuencia"
+            value={form.frequencyType}
+            onChange={(value) => setForm((current) => ({ ...current, frequencyType: value as MedicationFrequency }))}
+            options={[
+              { label: "Diaria", value: "daily" },
+              { label: "Semanal", value: "weekly" },
+              { label: "Cada X horas", value: "interval" },
+            ]}
+          />
+          {form.frequencyType === "interval" ? (
+            <TextField label="Cada cuántas horas" type="number" value={String(form.intervalHours)} onChange={(value) => setForm((current) => ({ ...current, intervalHours: Number(value) || 12 }))} />
+          ) : null}
+          <TextField label="Para qué sirve" value={form.purpose} onChange={(value) => setForm((current) => ({ ...current, purpose: value }))} />
+          {form.frequencyType === "weekly" ? (
+            <div className="sm:col-span-2">
+              <span className="text-sm font-semibold text-slate-700">Días</span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {weekDays.map((day) => (
+                  <label
+                    key={day.value}
+                    className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.weeklyDays.includes(day.value)}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          weeklyDays: event.target.checked
+                            ? [...current.weeklyDays, day.value]
+                            : current.weeklyDays.filter((value) => value !== day.value),
+                        }))
+                      }
+                    />
+                    {day.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-3 text-sm font-semibold text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.reminderEnabled}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, reminderEnabled: event.target.checked }))
+              }
+            />
+            Enviar recordatorio por email
+          </label>
+          {form.reminderEnabled ? (
+            <TextField
+              label="Email de recordatorio"
+              type="email"
+              value={form.reminderEmail}
+              onChange={(value) => setForm((current) => ({ ...current, reminderEmail: value }))}
+              required
+            />
+          ) : null}
+        </div>
+        <button className="mt-3 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white">
+          <Plus size={16} />
+          Agregar
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ProfessionalVisitPanel({
+  patient,
+  onAddVisit,
+  onRemoveVisit,
+  onVisitStatusChange,
+}: {
+  patient: ProfessionalPatient;
+  onAddVisit: (patientId: string, form: ProfessionalVisitForm) => void;
+  onRemoveVisit: (patientId: string, visitId: string) => void;
+  onVisitStatusChange: (patientId: string, visitId: string, status: VisitStatus) => void;
+}) {
+  const [form, setForm] = useState<ProfessionalVisitForm>({
+    date: getTodayIso(),
+    time: "10:00",
+    procedures: "",
+    notes: "",
+    recurrenceType: "once",
+    weeklyDays: [getWeekdayFromIso(getTodayIso())],
+    monthlyDay: getDayOfMonthFromIso(getTodayIso()),
+  });
+
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-200 p-4">
+      <h3 className="font-bold text-slate-950">Visitas programadas</h3>
+      <div className="mt-3 space-y-2">
+        {patient.visits.map((visit) => (
+          <div key={visit.id} className="rounded-xl bg-slate-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-bold text-slate-950">{visit.date} · {visit.time}</p>
+                <p className="text-sm text-slate-500">{visit.procedures}</p>
+                <p className="mt-1 text-xs text-slate-500">{visit.notes}</p>
+              </div>
+              <StatusBadge value={visit.status} />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {visit.status === "pendiente" ? (
+                <button
+                  onClick={() => onVisitStatusChange(patient.id, visit.id, "realizada")}
+                  className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"
+                >
+                  Confirmar
+                </button>
+              ) : null}
+              <button
+                onClick={() => onRemoveVisit(patient.id, visit.id)}
+                className="rounded-lg bg-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700"
+              >
+                Quitar
+              </button>
+            </div>
+          </div>
+        ))}
+        {patient.visits.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Sin visitas programadas.</p>
+        ) : null}
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!form.procedures.trim()) return;
+          onAddVisit(patient.id, form);
+          setForm({
+            date: getTodayIso(),
+            time: "10:00",
+            procedures: "",
+            notes: "",
+            recurrenceType: "once",
+            weeklyDays: [getWeekdayFromIso(getTodayIso())],
+            monthlyDay: getDayOfMonthFromIso(getTodayIso()),
+          });
+        }}
+        className="mt-4 rounded-xl bg-blue-50 p-3"
+      >
+        <p className="text-sm font-bold text-blue-900">Agregar visita</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <TextField label="Fecha" type="date" value={form.date} onChange={(value) => setForm((current) => ({ ...current, date: value }))} />
+          <TextField label="Hora" type="time" value={form.time} onChange={(value) => setForm((current) => ({ ...current, time: value }))} />
+          <SelectField
+            label="Frecuencia"
+            value={form.recurrenceType}
+            onChange={(value) => setForm((current) => ({ ...current, recurrenceType: value as VisitRecurrence }))}
+            options={[
+              { label: "Única", value: "once" },
+              { label: "Diaria", value: "daily" },
+              { label: "Semanal", value: "weekly" },
+              { label: "Mensual", value: "monthly" },
+            ]}
+          />
+          {form.recurrenceType === "weekly" ? (
+            <div className="sm:col-span-2">
+              <span className="text-sm font-semibold text-slate-700">Días de visita</span>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {weekDays.map((day) => (
+                  <label
+                    key={day.value}
+                    className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-600"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.weeklyDays.includes(day.value)}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          weeklyDays: event.target.checked
+                            ? [...current.weeklyDays, day.value]
+                            : current.weeklyDays.filter((value) => value !== day.value),
+                        }))
+                      }
+                    />
+                    {day.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {form.recurrenceType === "monthly" ? (
+            <TextField
+              label="Día del mes"
+              type="number"
+              value={String(form.monthlyDay)}
+              onChange={(value) =>
+                setForm((current) => ({
+                  ...current,
+                  monthlyDay: Math.min(31, Math.max(1, Number(value) || 1)),
+                }))
+              }
+            />
+          ) : null}
+          <TextField label="Procedimiento" value={form.procedures} onChange={(value) => setForm((current) => ({ ...current, procedures: value }))} required />
+          <TextAreaField label="Observaciones" value={form.notes} onChange={(value) => setForm((current) => ({ ...current, notes: value }))} />
+        </div>
+        <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-700">
+          {formatVisitRecurrence(form)}
+        </p>
+        <button className="mt-3 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">
+          <Plus size={16} />
+          Agendar
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ProfessionalHistoryPanel({
+  patient,
+  onAddObservation,
+}: {
+  patient: ProfessionalPatient;
+  onAddObservation: (patientId: string, observation: string) => void;
+}) {
+  const [observation, setObservation] = useState("");
+
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-200 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="font-bold text-slate-950">Historia clínica digital</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Observaciones, cambios de medicación y visitas quedan registrados.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+          {patient.history.length} eventos
+        </span>
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!observation.trim()) return;
+          onAddObservation(patient.id, observation);
+          setObservation("");
+        }}
+        className="mt-4 rounded-xl bg-slate-50 p-3"
+      >
+        <TextAreaField
+          label="Nueva observación clínica"
+          value={observation}
+          onChange={setObservation}
+          placeholder="Ej. Paciente refiere mareos al levantarse..."
+        />
+        <button className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white">
+          <Plus size={16} />
+          Guardar observación
+        </button>
+      </form>
+
+      <div className="mt-4 space-y-3">
+        {patient.history.map((event) => (
+          <div
+            key={event.id}
+            className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-[120px_1fr]"
+          >
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.1em] text-slate-400">
+                {event.date}
+              </p>
+              <span className="mt-2 inline-flex rounded-full bg-white px-2 py-1 text-[11px] font-bold text-slate-600">
+                {event.type}
+              </span>
+            </div>
+            <div>
+              <p className="font-bold text-slate-950">{event.title}</p>
+              <p className="mt-1 text-sm leading-6 text-slate-500">{event.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FamilyAccessPanel({
+  patientId,
+  familyAccesses,
+  ownerLabel,
+  onAddFamilyAccess,
+}: {
+  patientId: string;
+  familyAccesses: PatientFamilyAccess[];
+  ownerLabel: string;
+  onAddFamilyAccess: (patientId: string, form: FamilyAccessForm) => void;
+}) {
+  const [form, setForm] = useState<FamilyAccessForm>({
+    name: "",
+    email: "",
+    relationship: "",
+    accessLevel: "viewer",
+    canConfirmMedications: false,
+    canConfirmVisits: false,
+  });
+
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-200 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="font-bold text-slate-950">Acceso familiar</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            El {ownerLabel} puede invitar familiares al dashboard del paciente con permisos limitados.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+          {familyAccesses.length} accesos
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {familyAccesses.map((access) => (
+          <div key={access.id} className="rounded-xl bg-slate-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-bold text-slate-950">{access.name}</p>
+                <p className="text-sm text-slate-500">{access.relationship} · {access.email}</p>
+              </div>
+              <span className="rounded-full bg-white px-2 py-1 text-[11px] font-bold text-slate-600">
+                {access.invitationStatus}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <PermissionPill label={formatAccessLevel(access.accessLevel)} />
+              {access.permissions.canConfirmMedications ? <PermissionPill label="Confirma tomas" /> : null}
+              {access.permissions.canConfirmVisits ? <PermissionPill label="Confirma visitas" /> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!form.name.trim() || !form.email.trim()) return;
+          onAddFamilyAccess(patientId, form);
+          setForm({
+            name: "",
+            email: "",
+            relationship: "",
+            accessLevel: "viewer",
+            canConfirmMedications: false,
+            canConfirmVisits: false,
+          });
+        }}
+        className="mt-4 rounded-xl bg-blue-50 p-3"
+      >
+        <p className="text-sm font-bold text-blue-900">Invitar familiar</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <TextField label="Nombre" value={form.name} onChange={(value) => setForm((current) => ({ ...current, name: value }))} required />
+          <TextField label="Email" type="email" value={form.email} onChange={(value) => setForm((current) => ({ ...current, email: value }))} required />
+          <TextField label="Vínculo" value={form.relationship} onChange={(value) => setForm((current) => ({ ...current, relationship: value }))} placeholder="Ej. hija, nieto, responsable" />
+          <SelectField
+            label="Nivel"
+            value={form.accessLevel}
+            onChange={(value) => setForm((current) => ({ ...current, accessLevel: value as AccessLevel }))}
+            options={[
+              { label: "Solo ver dashboard", value: "viewer" },
+              { label: "Puede confirmar", value: "editor" },
+              { label: "Acceso completo", value: "full" },
+            ]}
+          />
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+            <input
+              type="checkbox"
+              checked={form.canConfirmMedications}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, canConfirmMedications: event.target.checked }))
+              }
+            />
+            Puede confirmar medicación
+          </label>
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+            <input
+              type="checkbox"
+              checked={form.canConfirmVisits}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, canConfirmVisits: event.target.checked }))
+              }
+            />
+            Puede confirmar visitas
+          </label>
+        </div>
+        <button className="mt-3 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">
+          <Mail size={16} />
+          Enviar invitación
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function EnterprisePortal({ onExit }: { onExit: () => void }) {
   const [doctors, setDoctors] = useState<EnterpriseDoctor[]>(enterpriseDoctors);
   const [patients, setPatients] = useState<EnterprisePatient[]>(enterprisePatients);
@@ -878,6 +2914,7 @@ function EnterprisePortal({ onExit }: { onExit: () => void }) {
           type: "nota",
         },
       ],
+      familyAccesses: [],
     };
     setPatients((current) => [patient, ...current]);
     setSelectedPatientId(patient.id);
@@ -955,6 +2992,117 @@ function EnterprisePortal({ onExit }: { onExit: () => void }) {
     );
   };
 
+  const addEnterpriseMedication = (
+    patientId: string,
+    form: Pick<ProfessionalMedicationForm, "name" | "time">,
+  ) => {
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              medications: [
+                ...patient.medications,
+                { name: form.name.trim(), time: form.time, status: "pendiente" as MedicationStatus },
+              ].sort((a, b) => a.time.localeCompare(b.time)),
+              history: [
+                {
+                  id: `enterprise-history-med-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Medicación agregada",
+                  detail: `${form.name.trim()} a las ${form.time}.`,
+                  type: "medicacion",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  const addEnterpriseVisit = (
+    patientId: string,
+    form: Pick<ProfessionalVisitForm, "time" | "procedures">,
+  ) => {
+    const professional = doctorSession?.name ?? "Equipo institucional";
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              visits: [
+                ...patient.visits,
+                {
+                  professional,
+                  type: form.procedures.trim(),
+                  time: form.time,
+                  status: "pendiente" as VisitStatus,
+                },
+              ].sort((a, b) => a.time.localeCompare(b.time)),
+              pendingVisits: patient.pendingVisits + 1,
+              history: [
+                {
+                  id: `enterprise-history-visit-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Visita agregada",
+                  detail: `${professional}: ${form.procedures.trim()} a las ${form.time}.`,
+                  type: "visita",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  const addEnterpriseFamilyAccess = (patientId: string, form: FamilyAccessForm) => {
+    const access = buildFamilyAccess(form);
+    setPatients((current) =>
+      current.map((patient) =>
+        patient.id === patientId
+          ? {
+              ...patient,
+              familyAccesses: [access, ...patient.familyAccesses],
+              history: [
+                {
+                  id: `enterprise-history-family-${Date.now()}`,
+                  date: getShortTimestamp(),
+                  title: "Familiar invitado",
+                  detail: `${access.name} recibirá acceso al dashboard desde la institución.`,
+                  type: "nota",
+                },
+                ...patient.history,
+              ],
+            }
+          : patient,
+      ),
+    );
+  };
+
+  if (doctorSession) {
+    const assignedPatients = patients
+      .filter((patient) => patient.assignedDoctors.includes(doctorSession.name))
+      .map(convertEnterprisePatientToProfessionalPatient);
+
+    return (
+      <ProfessionalWorkspace
+        key={doctorSession.id}
+        initialPatients={assignedPatients}
+        professionalName={doctorSession.name}
+        professionalRole={`${doctorSession.specialty} · Profesional institucional`}
+        contextLabel="Médico dentro de institución"
+        heading="Mi panel profesional"
+        description="Vista profesional con los pacientes asignados por la institución. Usa los mismos datos de medicación, visitas, historial y familiares del paciente."
+        onBack={() => setDoctorSession(null)}
+        backLabel="Volver a institución"
+        onExit={onExit}
+        exitLabel="Volver al ingreso"
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-6 lg:px-8">
@@ -965,22 +3113,10 @@ function EnterprisePortal({ onExit }: { onExit: () => void }) {
             </div>
             <div>
               <p className="font-bold tracking-wide">MEDICARE Empresas</p>
-              <p className="text-xs text-slate-500">
-                {doctorSession
-                  ? `Sesión médico: ${doctorSession.name}`
-                  : "Administrador institucional"}
-              </p>
+              <p className="text-xs text-slate-500">Administrador institucional</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {doctorSession ? (
-              <button
-                onClick={() => setDoctorSession(null)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-              >
-                Volver a administrador
-              </button>
-            ) : null}
             <button
               onClick={onExit}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
@@ -997,10 +3133,10 @@ function EnterprisePortal({ onExit }: { onExit: () => void }) {
             Obra social / geriátrico
           </p>
           <h1 className="mt-2 text-3xl font-bold text-slate-950 sm:text-4xl">
-            {doctorSession ? "Mi panel médico" : "Administrador institucional"}
+            Administrador institucional
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 sm:text-base">
-            Control compacto de médicos, pacientes, medicación recibida y visitas realizadas.
+            Control integral de médicos, pacientes, familiares, medicación recibida y visitas realizadas.
           </p>
         </div>
 
@@ -1029,6 +3165,9 @@ function EnterprisePortal({ onExit }: { onExit: () => void }) {
               canEdit
               onMedicationStatusChange={updateEnterpriseMedication}
               onVisitStatusChange={updateEnterpriseVisit}
+              onAddFamilyAccess={addEnterpriseFamilyAccess}
+              onAddMedication={addEnterpriseMedication}
+              onAddVisit={addEnterpriseVisit}
             />
           ) : null}
         </div>
@@ -1233,6 +3372,9 @@ function EnterprisePatientDetail({
   canEdit,
   onMedicationStatusChange,
   onVisitStatusChange,
+  onAddFamilyAccess,
+  onAddMedication,
+  onAddVisit,
 }: {
   patient: EnterprisePatient;
   canEdit: boolean;
@@ -1248,8 +3390,19 @@ function EnterprisePatientDetail({
     visitTime: string,
     status: VisitStatus,
   ) => void;
+  onAddFamilyAccess: (patientId: string, form: FamilyAccessForm) => void;
+  onAddMedication: (
+    patientId: string,
+    form: Pick<ProfessionalMedicationForm, "name" | "time">,
+  ) => void;
+  onAddVisit: (
+    patientId: string,
+    form: Pick<ProfessionalVisitForm, "time" | "procedures">,
+  ) => void;
 }) {
   const taken = patient.medications.filter((medication) => medication.status === "tomado").length;
+  const [medicationForm, setMedicationForm] = useState({ name: "", time: "08:00" });
+  const [visitForm, setVisitForm] = useState({ procedures: "", time: "10:00" });
 
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
@@ -1320,6 +3473,26 @@ function EnterprisePatientDetail({
               <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Sin medicación cargada.</p>
             )}
           </div>
+          {canEdit ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!medicationForm.name.trim()) return;
+                onAddMedication(patient.id, medicationForm);
+                setMedicationForm({ name: "", time: "08:00" });
+              }}
+              className="mt-3 rounded-xl bg-blue-50 p-3"
+            >
+              <p className="text-sm font-bold text-blue-900">Agregar medicación</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <TextField label="Nombre" value={medicationForm.name} onChange={(value) => setMedicationForm((current) => ({ ...current, name: value }))} />
+                <TextField label="Hora" type="time" value={medicationForm.time} onChange={(value) => setMedicationForm((current) => ({ ...current, time: value }))} />
+              </div>
+              <button className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">
+                Agregar
+              </button>
+            </form>
+          ) : null}
         </div>
 
         <div>
@@ -1349,6 +3522,26 @@ function EnterprisePatientDetail({
               <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Sin visitas cargadas.</p>
             )}
           </div>
+          {canEdit ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!visitForm.procedures.trim()) return;
+                onAddVisit(patient.id, visitForm);
+                setVisitForm({ procedures: "", time: "10:00" });
+              }}
+              className="mt-3 rounded-xl bg-violet-50 p-3"
+            >
+              <p className="text-sm font-bold text-violet-900">Agregar visita</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <TextField label="Procedimiento" value={visitForm.procedures} onChange={(value) => setVisitForm((current) => ({ ...current, procedures: value }))} />
+                <TextField label="Hora" type="time" value={visitForm.time} onChange={(value) => setVisitForm((current) => ({ ...current, time: value }))} />
+              </div>
+              <button className="mt-3 rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white">
+                Agendar
+              </button>
+            </form>
+          ) : null}
         </div>
       </div>
 
@@ -1401,6 +3594,12 @@ function EnterprisePatientDetail({
           ) : null}
         </div>
       </div>
+      <FamilyAccessPanel
+        patientId={patient.id}
+        familyAccesses={patient.familyAccesses}
+        ownerLabel="equipo institucional"
+        onAddFamilyAccess={onAddFamilyAccess}
+      />
     </article>
   );
 }
@@ -1472,6 +3671,7 @@ function LoginScreen({
   onSignup,
   onAcceptInvitation,
   onEnterpriseDemo,
+  onProfessionalDemo,
 }: {
   demoUsers: SessionUser[];
   pendingInvitations: CareInvitation[];
@@ -1482,6 +3682,7 @@ function LoginScreen({
   onSignup: (form: SignupForm) => void;
   onAcceptInvitation: (invitation: CareInvitation) => void;
   onEnterpriseDemo: () => void;
+  onProfessionalDemo: () => void;
 }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [loginForm, setLoginForm] = useState<LoginForm>({ email: "", password: "" });
@@ -1674,6 +3875,19 @@ function LoginScreen({
             <div>
               <p className="font-bold text-slate-950">Portal empresas</p>
               <p className="text-sm text-slate-600">Obra social / geriátrico</p>
+            </div>
+          </button>
+          <button
+            onClick={onProfessionalDemo}
+            disabled={loading}
+            className="mt-3 flex w-full items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-600 text-white">
+              <Stethoscope size={23} />
+            </div>
+            <div>
+              <p className="font-bold text-slate-950">Profesional independiente</p>
+              <p className="text-sm text-slate-600">Cuidadores, enfermería y salud domiciliaria</p>
             </div>
           </button>
           <div className="mt-6 grid gap-3">
@@ -3328,6 +5542,103 @@ function PermissionPill({ label }: { label: string }) {
       {label}
     </span>
   );
+}
+
+function getProfessionalAdherence(patient: ProfessionalPatient) {
+  if (patient.medications.length === 0) return 0;
+  const taken = patient.medications.filter((medication) => medication.status === "tomado").length;
+  return Math.round((taken / patient.medications.length) * 100);
+}
+
+function getProfessionalScheduledVisits(patients: ProfessionalPatient[]): ProfessionalScheduledVisit[] {
+  return patients
+    .flatMap((patient) =>
+      patient.visits
+        .filter((visit) => visit.status === "pendiente")
+        .map((visit) => ({
+          patientId: patient.id,
+          patientName: patient.name,
+          patientAge: patient.age,
+          patientStatus: patient.generalStatus,
+          visit,
+        })),
+    )
+    .sort((a, b) => compareVisitsBySchedule(a.visit, b.visit));
+}
+
+function convertEnterprisePatientToProfessionalPatient(patient: EnterprisePatient): ProfessionalPatient {
+  const today = getTodayIso();
+  return {
+    id: patient.id,
+    name: patient.name,
+    age: patient.age,
+    diagnosis: patient.status,
+    location: patient.location,
+    emergencyContact: patient.familyAccesses[0]
+      ? `${patient.familyAccesses[0].name} · ${patient.familyAccesses[0].email}`
+      : "Sin contacto familiar cargado",
+    generalStatus: patient.status,
+    allergies: "Sin alergias registradas en demo institucional",
+    carePlan: `Seguimiento institucional por ${formatAssignedDoctors(patient.assignedDoctors)}.`,
+    clinicalNotes: patient.alerts.join(". "),
+    medications: patient.medications.map((medication, index) => ({
+      id: `${patient.id}-enterprise-med-${index}`,
+      name: medication.name,
+      dose: "Dosis registrada en institución",
+      purpose: "Tratamiento indicado por el equipo de salud.",
+      time: medication.time,
+      status: medication.status,
+      frequencyType: "daily",
+      intervalHours: 24,
+      weeklyDays: [],
+      reminderEnabled: false,
+      reminderEmail: "",
+    })),
+    visits: patient.visits.map((visit, index) => ({
+      id: `${patient.id}-enterprise-visit-${index}`,
+      professional: visit.professional,
+      role: visit.type,
+      date: formatSelectedDate(today),
+      dateIso: today,
+      time: visit.time,
+      procedures: visit.type,
+      notes: `Profesional asignado: ${visit.professional}`,
+      status: visit.status,
+      recurrenceType: "once",
+      weeklyDays: [],
+      monthlyDay: null,
+    })),
+    history: patient.history,
+    familyAccesses: patient.familyAccesses,
+  };
+}
+
+function isMedicationScheduledToday(medication: Medication, dateIso: string) {
+  if (medication.frequencyType === "weekly") {
+    return medication.weeklyDays.includes(getWeekdayFromIso(dateIso));
+  }
+  return true;
+}
+
+function buildFamilyAccess(form: FamilyAccessForm): PatientFamilyAccess {
+  const canEdit = form.accessLevel === "full" || form.accessLevel === "editor";
+  return {
+    id: `family-access-${Date.now()}`,
+    name: form.name.trim(),
+    email: form.email.trim(),
+    relationship: form.relationship.trim() || "Familiar",
+    accessLevel: form.accessLevel,
+    invitationStatus: "pendiente",
+    permissions: {
+      canManagePatient: form.accessLevel === "full",
+      canManageMedications: form.accessLevel === "full",
+      canConfirmMedications: canEdit || form.canConfirmMedications,
+      canManageVisits: form.accessLevel === "full",
+      canConfirmVisits: canEdit || form.canConfirmVisits,
+      canManageContacts: false,
+      canViewHistory: true,
+    },
+  };
 }
 
 function EvolutionSection({
